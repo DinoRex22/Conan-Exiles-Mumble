@@ -1,8 +1,8 @@
 # Conan-Exiles-Mumble
 
-# Je vous invite à lire attentivement la licence avant toute utilisation.
+# I invite you to carefully read the license before any use.
 
-Bonjour,
-Je suis heureux de vous présenter mon projet finalisé : un plugin Mumble destiné à Conan Exiles. Bien que certaines fonctionnalités prévues aient été abandonnées, le plugin reste entièrement fonctionnel et parfaitement utilisable pour les serveurs, il suffit juste de les réactiver et de les configurer. J'ai pris soin de commenter mon code autant que possible en anglais. N'hésitez pas à me partager vos retours, suggestions d'améliorations ou modifications qui pourraient être pertinentes.
+Hello,  
+I am pleased to present my completed project: a Mumble plugin for Conan Exiles. Although some planned features were abandoned, the plugin remains fully functional and perfectly usable for servers; you just need to reactivate and configure them. I have made sure to comment my code as much as possible in English. Feel free to share your feedback, improvement suggestions, or modifications that could be relevant.
 
 https://discord.gg/tFBbQzmDaZ

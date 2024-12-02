@@ -1,11 +1,12 @@
 // Copyright 2021 The Mumble Developers. All rights reserved. 
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
-// Mumble source tree or at <https://www.mumble.info/LICENSE>.
+// Mumble source tree or at https://www.mumble.info/LICENSE.
 
 // Copyright (c) 2024 Dino_Rex
 // This code is made available under the following conditions:
 // 1. Plugin creators must credit the author (Dino_Rex) and include a link to the Discord https://discord.gg/tFBbQzmDaZ in both the source code and the description of the compiled Mumble plugin.
+// 2. All usage of this code must remain open source. A link to the open-source project must be shared on the Discord https://discord.gg/tFBbQzmDaZ in the "open-source" channel.
 
 #include "MumblePlugin_v_1_0_x.h"
 #include <winsock2.h>

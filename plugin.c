@@ -1,3 +1,10 @@
+// Copyright 2021 The Mumble Developers. All rights reserved.
+// Use of this source code is governed by a BSD-style license
+// that can be found in the LICENSE file at the root of the
+// Mumble source tree or at <https://www.mumble.info/LICENSE>.
+
+/// This header file specifies the Mumble plugin interface
+
 #include "MumblePlugin_v_1_0_x.h"
 #include <winsock2.h>
 #include <windows.h>
@@ -20,7 +27,7 @@
 static volatile BOOL versionReceived = FALSE;
 static volatile BOOL zonesReceived = FALSE;
 
-// Variables pour contrôler l'activation des fonctions
+// Variables pour contrÃ´ler l'activation des fonctions
 static BOOL enableSetMaximumAudioDistance = FALSE;
 static BOOL enableCheckPlayerZone = FALSE;
 static BOOL enableCheckVersionThread = FALSE;
@@ -43,7 +50,7 @@ static void displayInChat(const char* message) {
     mumbleAPI.log(ownID, message);
 }
 
-// Ajout de variables pour suivre les offsets utilisés
+// Ajout de variables pour suivre les offsets utilisÃ©s
 bool usedPrimaryX = true;
 bool usedPrimaryY = true;
 bool usedPrimaryZ = true;
@@ -64,30 +71,30 @@ struct Zone* zones = NULL;
 size_t zoneCount = 0;
 
 static void parseZones(const char* response) {
-    // Cherche le début de la section "ZONES:" dans la réponse
+    // Cherche le dÃ©but de la section "ZONES:" dans la rÃ©ponse
     const char* zonesData = strstr(response, "ZONES: ");
     if (zonesData == NULL) {
-        displayInChat("Erreur: données de zones non trouvées dans la réponse");
+        displayInChat("Erreur: donnÃ©es de zones non trouvÃ©es dans la rÃ©ponse");
         return;
     }
 
-    // Avancer le pointeur au-delà de "ZONES: "
+    // Avancer le pointeur au-delÃ  de "ZONES: "
     zonesData += 7;
 
-    // Compte le nombre de zones (assumant qu'elles sont séparées par des virgules)
+    // Compte le nombre de zones (assumant qu'elles sont sÃ©parÃ©es par des virgules)
     zoneCount = 1;
     const char* p = zonesData;
     while (*p) {
-        if (*p == ';') { // Changez en point-virgule si les zones sont séparées par des points-virgules
+        if (*p == ';') { // Changez en point-virgule si les zones sont sÃ©parÃ©es par des points-virgules
             zoneCount++;
         }
         p++;
     }
 
-    // Alloue la mémoire pour les zones
+    // Alloue la mÃ©moire pour les zones
     zones = (struct Zone*)malloc(zoneCount * sizeof(struct Zone));
     if (zones == NULL) {
-        displayInChat("Erreur d'allocation de mémoire pour les zones");
+        displayInChat("Erreur d'allocation de mÃ©moire pour les zones");
         return;
     }
 
@@ -105,7 +112,7 @@ static void parseZones(const char* response) {
             return;
         }
 
-        // Passe à la prochaine zone (en utilisant le délimiteur `;` ou `,`)
+        // Passe Ã  la prochaine zone (en utilisant le dÃ©limiteur `;` ou `,`)
         while (*p && *p != ';') {
             p++;
         }
@@ -171,7 +178,7 @@ static void checkPlayerZone() {
 
 static volatile int connectionAttempts = 0;
 
-static volatile BOOL fusionRequestSent = FALSE; // Nouveau flag pour vérifier si la requête FUSION a été envoyée
+static volatile BOOL fusionRequestSent = FALSE; // Nouveau flag pour vÃ©rifier si la requÃªte FUSION a Ã©tÃ© envoyÃ©e
 
 static void connectToServer(void* param) {
     if (connectionAttempts >= 2) return;
@@ -204,7 +211,7 @@ static void connectToServer(void* param) {
 
     char* buffer = (char*)malloc(16384);
     if (buffer == NULL) {
-        displayInChat("Erreur d'allocation de mémoire");
+        displayInChat("Erreur d'allocation de mÃ©moire");
         closesocket(sock);
         WSACleanup();
         return;
@@ -217,32 +224,32 @@ static void connectToServer(void* param) {
         // Variable pour le contexte de strtok_s
         char* context = NULL;
 
-        // Découpe la réponse par ligne en utilisant \n comme séparateur
+        // DÃ©coupe la rÃ©ponse par ligne en utilisant \n comme sÃ©parateur
         char* line = strtok_s(buffer, "\n", &context);
         while (line != NULL) {
-            // Vérifie si la ligne contient "VERSION:"
+            // VÃ©rifie si la ligne contient "VERSION:"
             if (strncmp(line, "VERSION:", 8) == 0) {
                 isConnected = (strcmp(line, REQUIRED_VERSION) == 0);
                 mumbleAPI.log(ownID, isConnected ? "The version is compatible." : "The version is not compatible.");
-                versionReceived = TRUE; // Marquer la version comme reçue
+                versionReceived = TRUE; // Marquer la version comme reÃ§ue
             }
-            // Vérifie si la ligne contient "ZONES:"
+            // VÃ©rifie si la ligne contient "ZONES:"
             else if (strncmp(line, "ZONES:", 6) == 0) {
                 parseZones(line); // Appelle parseZones pour analyser les zones
-                zonesReceived = TRUE; // Marquer les zones comme reçues
+                zonesReceived = TRUE; // Marquer les zones comme reÃ§ues
             }
-            // Passe à la ligne suivante
+            // Passe Ã  la ligne suivante
             line = strtok_s(NULL, "\n", &context);
         }
     }
     else {
-        displayInChat("Erreur lors de la lecture de la réponse du serveur");
+        displayInChat("Erreur lors de la lecture de la rÃ©ponse du serveur");
     }
 
-    // Si version et zones reçus, fermer la connexion
+    // Si version et zones reÃ§us, fermer la connexion
     if (versionReceived && zonesReceived) {
         closesocket(sock); // Ferme la connexion
-        WSACleanup();      // Libère les ressources de la connexion
+        WSACleanup();      // LibÃ¨re les ressources de la connexion
     }
 
     free(buffer);
@@ -255,7 +262,7 @@ static void startVersionCheck() {
 
 // Fonction pour obtenir l'ID du processus ConanSandbox.exe / Function to get the process ID of ConanSandbox.exe
 static BOOL findProcessId(const TCHAR* processName, DWORD* processID) {
-    if (!enableFindProcessId) return FALSE;  // Vérification si activée
+    if (!enableFindProcessId) return FALSE;  // VÃ©rification si activÃ©e
 
     HANDLE hProcessSnap;
     PROCESSENTRY32 pe32 = { 0 };
@@ -286,7 +293,7 @@ static BOOL findProcessId(const TCHAR* processName, DWORD* processID) {
 
 // Fonction pour obtenir l'adresse de base de ConanSandbox.exe / Function to get the base address of ConanSandbox.exe
 static BOOL findBaseAddress(DWORD processID, LPVOID* baseAddress) {
-    if (!enableFindBaseAddress) return FALSE;  // Vérification si activée
+    if (!enableFindBaseAddress) return FALSE;  // VÃ©rification si activÃ©e
 
     HANDLE hModuleSnap = INVALID_HANDLE_VALUE;
     MODULEENTRY32 me32 = { 0 };
@@ -308,9 +315,9 @@ static BOOL findBaseAddress(DWORD processID, LPVOID* baseAddress) {
     return TRUE;
 }
 
-// Fonction pour lire un float à une adresse mémoire donnée / Function to read a float at a given memory address
+// Fonction pour lire un float Ã  une adresse mÃ©moire donnÃ©e / Function to read a float at a given memory address
 static BOOL readMemoryValue(HANDLE hProcess, LPVOID address, float* value) {
-    if (!enableReadMemoryValue) return FALSE;  // Vérification si activée
+    if (!enableReadMemoryValue) return FALSE;  // VÃ©rification si activÃ©e
 
     SIZE_T bytesRead;
     if (ReadProcessMemory(hProcess, address, value, sizeof(float), &bytesRead) && bytesRead == sizeof(float)) {
@@ -323,33 +330,33 @@ static BOOL readCoordinates(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* o
     DWORD_PTR currentAddress = baseAddress;
     for (SIZE_T i = 0; i < offsetCount; ++i) {
         if (!ReadProcessMemory(hProcess, (LPCVOID)currentAddress, &currentAddress, sizeof(currentAddress), NULL)) {
-            return FALSE; // Retourne FALSE si une erreur est rencontrée
+            return FALSE; // Retourne FALSE si une erreur est rencontrÃ©e
         }
         currentAddress += offsets[i];
     }
     return readMemoryValue(hProcess, (LPVOID)currentAddress, value);
 }
 
-// Fonction pour obtenir les coordonnées du joueur / Function to get the player's coordinates
+// Fonction pour obtenir les coordonnÃ©es du joueur / Function to get the player's coordinates
 static BOOL getPlayerCoordinates() {
-    if (!enableGetPlayerCoordinates) return FALSE;  // Vérification si activée
+    if (!enableGetPlayerCoordinates) return FALSE;  // VÃ©rification si activÃ©e
 
-    // Avant de lire les coordonnées, vérifiez la version
-    static bool versionChecked = false;  // Variable pour suivre si la version a été vérifiée
-    static bool versionIncompatibleLogged = false; // Variable pour suivre si le message a été affiché
+    // Avant de lire les coordonnÃ©es, vÃ©rifiez la version
+    static bool versionChecked = false;  // Variable pour suivre si la version a Ã©tÃ© vÃ©rifiÃ©e
+    static bool versionIncompatibleLogged = false; // Variable pour suivre si le message a Ã©tÃ© affichÃ©
 
     if (!versionChecked) {
-        // Vérifie la connexion avant d'obtenir les coordonnées
+        // VÃ©rifie la connexion avant d'obtenir les coordonnÃ©es
         if (!isConnected) {
-            startVersionCheck(); // Démarre le thread de vérification de version
-            return FALSE; // Ne pas procéder si pas connecté
+            startVersionCheck(); // DÃ©marre le thread de vÃ©rification de version
+            return FALSE; // Ne pas procÃ©der si pas connectÃ©
         }
-        versionIncompatibleLogged = false; // Réinitialiser si la version est correcte
-        versionChecked = true; // Marquer que la version a été vérifiée
+        versionIncompatibleLogged = false; // RÃ©initialiser si la version est correcte
+        versionChecked = true; // Marquer que la version a Ã©tÃ© vÃ©rifiÃ©e
     }
 
     static bool processIdNotFound = false;
-    static bool successMessageLogged = false; // Déclaration ici pour le suivi des succès
+    static bool successMessageLogged = false; // DÃ©claration ici pour le suivi des succÃ¨s
     DWORD processID = 0;
     LPVOID baseAddress = NULL;
     HANDLE hProcess = NULL;
@@ -398,11 +405,11 @@ static BOOL getPlayerCoordinates() {
     BOOL errorX = FALSE, errorY = FALSE, errorZ = FALSE;
     static bool errorLoggedX = false, errorLoggedY = false, errorLoggedZ = false;
 
-    // Lire l'axe X avec les offsets séparés
+    // Lire l'axe X avec les offsets sÃ©parÃ©s
     DWORD_PTR currentAddressX = (DWORD_PTR)baseAddress + baseAddressOffsetX_Principal;
     if (!readCoordinates(hProcess, currentAddressX, offsetX, sizeof(offsetX) / sizeof(offsetX[0]), &axe_x)) {
-        usedPrimaryX = false; // Indiquer que l'offset principal a échoué
-        if (enableBackupOffsetX) { // Vérifier si les offsets de secours sont activés
+        usedPrimaryX = false; // Indiquer que l'offset principal a Ã©chouÃ©
+        if (enableBackupOffsetX) { // VÃ©rifier si les offsets de secours sont activÃ©s
             currentAddressX = (DWORD_PTR)baseAddress + baseAddressOffsetX_Backup;
             if (!readCoordinates(hProcess, currentAddressX, backupOffsetX, sizeof(backupOffsetX) / sizeof(backupOffsetX[0]), &axe_x)) {
                 errorX = TRUE; // Enregistrer l'erreur
@@ -410,11 +417,11 @@ static BOOL getPlayerCoordinates() {
         }
     }
 
-    // Lire l'axe Y avec les offsets séparés
+    // Lire l'axe Y avec les offsets sÃ©parÃ©s
     DWORD_PTR currentAddressY = (DWORD_PTR)baseAddress + baseAddressOffsetY_Principal;
     if (!readCoordinates(hProcess, currentAddressY, offsetY, sizeof(offsetY) / sizeof(offsetY[0]), &axe_y)) {
-        usedPrimaryY = false; // Indiquer que l'offset principal a échoué
-        if (enableBackupOffsetY) { // Vérifier si les offsets de secours sont activés
+        usedPrimaryY = false; // Indiquer que l'offset principal a Ã©chouÃ©
+        if (enableBackupOffsetY) { // VÃ©rifier si les offsets de secours sont activÃ©s
             currentAddressY = (DWORD_PTR)baseAddress + baseAddressOffsetY_Backup;
             if (!readCoordinates(hProcess, currentAddressY, backupOffsetY, sizeof(backupOffsetY) / sizeof(backupOffsetY[0]), &axe_y)) {
                 errorY = TRUE; // Enregistrer l'erreur
@@ -422,11 +429,11 @@ static BOOL getPlayerCoordinates() {
         }
     }
 
-    // Lire l'axe Z avec les offsets séparés
+    // Lire l'axe Z avec les offsets sÃ©parÃ©s
     DWORD_PTR currentAddressZ = (DWORD_PTR)baseAddress + baseAddressOffsetZ_Principal;
     if (!readCoordinates(hProcess, currentAddressZ, offsetZ, sizeof(offsetZ) / sizeof(offsetZ[0]), &axe_z)) {
-        usedPrimaryZ = false; // Indiquer que l'offset principal a échoué
-        if (enableBackupOffsetZ) { // Vérifier si les offsets de secours sont activés
+        usedPrimaryZ = false; // Indiquer que l'offset principal a Ã©chouÃ©
+        if (enableBackupOffsetZ) { // VÃ©rifier si les offsets de secours sont activÃ©s
             currentAddressZ = (DWORD_PTR)baseAddress + baseAddressOffsetZ_Backup;
             if (!readCoordinates(hProcess, currentAddressZ, backupOffsetZ, sizeof(backupOffsetZ) / sizeof(backupOffsetZ[0]), &axe_z)) {
                 errorZ = TRUE; // Enregistrer l'erreur
@@ -434,28 +441,28 @@ static BOOL getPlayerCoordinates() {
         }
     }
 
-    // Log message de réussite une seule fois
+    // Log message de rÃ©ussite une seule fois
     if (!successMessageLogged && !(errorX || errorY || errorZ)) {
-        // Créer le message de succès en fonction des offsets utilisés
+        // CrÃ©er le message de succÃ¨s en fonction des offsets utilisÃ©s
         char successMsg[256];
-        sprintf_s(successMsg, sizeof(successMsg), u8"Succès : Coordonnées trouvées : X %s, Y %s, Z %s.",
+        sprintf_s(successMsg, sizeof(successMsg), u8"SuccÃ¨s : CoordonnÃ©es trouvÃ©es : X %s, Y %s, Z %s.",
             usedPrimaryX ? "principal" : "secondaire",
             usedPrimaryY ? "principal" : "secondaire",
             usedPrimaryZ ? "principal" : "secondaire");
         //mumbleAPI.log(ownID, successMsg);
-        successMessageLogged = true; // Marque que le message a été logué
+        successMessageLogged = true; // Marque que le message a Ã©tÃ© loguÃ©
     }
     else if (errorX || errorY || errorZ) {
-        // Réinitialiser successMessageLogged si une erreur se produit
+        // RÃ©initialiser successMessageLogged si une erreur se produit
         successMessageLogged = false;
     }
 
-    // Mécanisme de base pour les axes principaux
+    // MÃ©canisme de base pour les axes principaux
     static bool errorLogged = false;
     static time_t lastErrorTime = 0; // Pour garder la trace du temps du dernier message d'erreur
     if ((errorX || errorY || errorZ) && (!errorLogged || difftime(time(NULL), lastErrorTime) >= 60)) {
         char errorMsg[256];
-        strcpy_s(errorMsg, sizeof(errorMsg), u8"Erreur : Impossible de récupérer la position des axes : ");
+        strcpy_s(errorMsg, sizeof(errorMsg), u8"Erreur : Impossible de rÃ©cupÃ©rer la position des axes : ");
         if (errorX) strcat_s(errorMsg, sizeof(errorMsg), "X ");
         if (errorY) strcat_s(errorMsg, sizeof(errorMsg), "Y ");
         if (errorZ) strcat_s(errorMsg, sizeof(errorMsg), "Z ");
@@ -465,10 +472,10 @@ static BOOL getPlayerCoordinates() {
 
         mumbleAPI.log(ownID, errorMsg);
         errorLogged = true;
-        lastErrorTime = time(NULL); // Met à jour le temps du dernier message d'erreur
+        lastErrorTime = time(NULL); // Met Ã  jour le temps du dernier message d'erreur
     }
     else if (!errorX && !errorY && !errorZ) {
-        errorLogged = false; // Réinitialiser si toutes les lectures réussissent
+        errorLogged = false; // RÃ©initialiser si toutes les lectures rÃ©ussissent
     }
 
     // Regroupement des messages d'erreur des axes de secours
@@ -486,10 +493,10 @@ static BOOL getPlayerCoordinates() {
 
         //mumbleAPI.log(ownID, errorMsg);
         errorLoggedBackup = true;
-        lastErrorTimeBackup = time(NULL); // Met à jour le temps du dernier message d'erreur
+        lastErrorTimeBackup = time(NULL); // Met Ã  jour le temps du dernier message d'erreur
     }
     else if (!errorX && !errorY && !errorZ) {
-        errorLoggedBackup = false; // Réinitialiser si toutes les lectures réussissent
+        errorLoggedBackup = false; // RÃ©initialiser si toutes les lectures rÃ©ussissent
     }
 
     CloseHandle(hProcess);
@@ -498,15 +505,15 @@ static BOOL getPlayerCoordinates() {
 
 static void continuousGetPlayerCoordinates(void* arg) {
     while (enableGetPlayerCoordinates) {
-        getPlayerCoordinates();  // Appelle la fonction pour obtenir les coordonnées du joueur
-        Sleep(100); // Attendre 100 millisecondes avant la prochaine itération pour éviter une surcharge
+        getPlayerCoordinates();  // Appelle la fonction pour obtenir les coordonnÃ©es du joueur
+        Sleep(100); // Attendre 100 millisecondes avant la prochaine itÃ©ration pour Ã©viter une surcharge
     }
 }
 
 // Fonction d'initialisation du plugin / Plugin initialization function
 mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
     ownID = pluginID;
-    //mumbleAPI.log(ownID, u8"Plugin chargé.");
+    //mumbleAPI.log(ownID, u8"Plugin chargÃ©.");
 
     // Activer toutes les fonctions
     enableSetMaximumAudioDistance = TRUE;
@@ -518,10 +525,10 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
     enableReadMemoryValue = TRUE;
     enableGetPlayerCoordinates = TRUE;
 
-    // Démarrer le thread pour obtenir les coordonnées du joueur
+    // DÃ©marrer le thread pour obtenir les coordonnÃ©es du joueur
     _beginthread(continuousGetPlayerCoordinates, 0, NULL);
 
-    connectionAttempts = 0; // Réinitialiser le compteur de tentatives de connexion
+    connectionAttempts = 0; // RÃ©initialiser le compteur de tentatives de connexion
 
     return MUMBLE_STATUS_OK;
 }
@@ -534,29 +541,29 @@ uint8_t mumble_initPositionalData(const char* const* programNames, const uint64_
     return MUMBLE_PDEC_OK;
 }
 
-// Fonction pour remplir les données de position pour Mumble
+// Fonction pour remplir les donnÃ©es de position pour Mumble
 bool mumble_fetchPositionalData(float* avatarPos, float* avatarDir, float* avatarAxis, float* cameraPos,
     float* cameraDir, float* cameraAxis, const char** context, const char** identity) {
 
-    // Conversion des coordonnées de centimètres en mètres
-    avatarPos[0] = axe_x / 100.0f; // Conversion de X en mètres
-    avatarPos[1] = axe_y / 100.0f; // Conversion de Y en mètres
-    avatarPos[2] = axe_z / 10.0f; // Conversion de Z en mètres
+    // Conversion des coordonnÃ©es de centimÃ¨tres en mÃ¨tres
+    avatarPos[0] = axe_x / 100.0f; // Conversion de X en mÃ¨tres
+    avatarPos[1] = axe_y / 100.0f; // Conversion de Y en mÃ¨tres
+    avatarPos[2] = axe_z / 10.0f; // Conversion de Z en mÃ¨tres
 
     // Copier la position de l'avatar dans cameraPos (sans offset)
     cameraPos[0] = avatarPos[0]; //X
     cameraPos[1] = avatarPos[1]; // Y
     cameraPos[2] = avatarPos[2]; // Z
 
-    /* // Conversion des coordonnées de centimètres en mètres
-    avatarPos[0] = floor(axe_x / 100.0f); // Conversion de X en mètres, sans décimales
-    avatarPos[1] = floor(axe_y / 100.0f); // Conversion de Y en mètres, sans décimales
-    avatarPos[2] = floor(axe_z / 10.0f);  // Conversion de Z en mètres, sans décimales*/
+    /* // Conversion des coordonnÃ©es de centimÃ¨tres en mÃ¨tres
+    avatarPos[0] = floor(axe_x / 100.0f); // Conversion de X en mÃ¨tres, sans dÃ©cimales
+    avatarPos[1] = floor(axe_y / 100.0f); // Conversion de Y en mÃ¨tres, sans dÃ©cimales
+    avatarPos[2] = floor(axe_z / 10.0f);  // Conversion de Z en mÃ¨tres, sans dÃ©cimales*/
 
-    // Vérification de la zone pour ajuster la distance audio
+    // VÃ©rification de la zone pour ajuster la distance audio
     checkPlayerZone();
 
-    // Remplir les autres champs avec des zéros
+    // Remplir les autres champs avec des zÃ©ros
     memset(avatarDir, 0, 3 * sizeof(float));
     memset(avatarAxis, 0, 3 * sizeof(float));
     memset(cameraDir, 0, 3 * sizeof(float));
@@ -564,11 +571,11 @@ bool mumble_fetchPositionalData(float* avatarPos, float* avatarDir, float* avata
     *context = "";
     *identity = "";
 
-    // mumbleAPI.log(ownID, u8"Position mise à jour.");
+    // mumbleAPI.log(ownID, u8"Position mise Ã  jour.");
     return true;
 }
 
-// Fonction pour nettoyer les données de position / Function to clean up positional data
+// Fonction pour nettoyer les donnÃ©es de position / Function to clean up positional data
 void mumble_shutdownPositionalData() {}
 
 mumble_version_t mumble_getAPIVersion() {
@@ -638,7 +645,7 @@ static mumble_plugin_id_t mumble_getPluginID() {
 
 // Fonction de nettoyage du plugin / Start displaying coordinates
 void mumble_shutdown() {
-    // Désactiver toutes les fonctions
+    // DÃ©sactiver toutes les fonctions
     enableSetMaximumAudioDistance = FALSE;
     enableCheckPlayerZone = FALSE;
     enableCheckVersionThread = FALSE;

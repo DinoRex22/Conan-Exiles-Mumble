@@ -7,8 +7,6 @@
 // This code is made available under the following conditions:
 // 1. Plugin creators must credit the author (Dino_Rex) and include a link to the Discord https://discord.gg/tFBbQzmDaZ in both the source code and the description of the compiled Mumble plugin.
 
-/// This header file specifies the Mumble plugin interface
-
 #include "MumblePlugin_v_1_0_x.h"
 #include <winsock2.h>
 #include <windows.h>

@@ -5,10 +5,16 @@
 
 // The following conditions apply exclusively to the code authored by Dino_Rex and do not affect or modify the copyright or licensing terms of the original Mumble code.
 
-// Copyright (c) Dino_Rex
-// This code is made available under the following conditions:
+// MIT License
+
+// Copyright (c) 2024 Dino_Rex
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is provided to do so, subject to the following conditions:
+
 // 1. Plugin creators must credit the author (Dino_Rex) and include a link to the Discord https://discord.gg/tFBbQzmDaZ in both the source code and the description of the compiled Mumble plugin.
 // 2. All usage of this code must remain open source. A link to the open-source project must be shared on the Discord https://discord.gg/tFBbQzmDaZ in the "open-source" channel.
+// 3. Redistribution, modification, or use of the code in any way is allowed only if these conditions are met.
+// 4. This code may not be used in any proprietary, non-open-source software.
 
 #include "MumblePlugin_v_1_0_x.h"
 #include <winsock2.h>

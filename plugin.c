@@ -13,8 +13,8 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#define SERVER_IP "74.210.183.203" // Adresse IP de votre serveur
-#define SERVER_PORT 5924 // Port que vous avez ouvert
+#define SERVER_IP "Private" // Adresse IP de votre serveur
+#define SERVER_PORT Private // Port que vous avez ouvert
 #define REQUIRED_VERSION "VERSION: 2.0.0" // Version requise pour le plugin
 
 static volatile BOOL versionReceived = FALSE;

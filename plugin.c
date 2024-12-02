@@ -3,6 +3,8 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at https://www.mumble.info/LICENSE.
 
+// The following conditions apply exclusively to the code authored by Dino_Rex and do not affect or modify the copyright or licensing terms of the original Mumble code.
+
 // Copyright (c) 2024 Dino_Rex
 // This code is made available under the following conditions:
 // 1. Plugin creators must credit the author (Dino_Rex) and include a link to the Discord https://discord.gg/tFBbQzmDaZ in both the source code and the description of the compiled Mumble plugin.

@@ -472,19 +472,13 @@ static BOOL getPlayerCoordinates() {
         }
     }
 
-    // Lire l'axe X pour avatarAxis X
-    DWORD_PTR currentAddressXavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetX_avatarAxis;
-    if (!readavatarAxisX(hProcess, currentAddressXavatarAxis, offsetXavatarAxis, sizeof(offsetXavatarAxis) / sizeof(offsetXavatarAxis[0]), &avatarAxisX)) {
-        usedPrimaryX = false; // Indiquer que l'offset principal a échoué
-        errorX = TRUE; // Enregistrer l'erreur directement si la lecture échoue
-    }
+// Lire l'axe X pour avatarAxis X
+DWORD_PTR currentAddressXavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetX_avatarAxis;
+if (!readavatarAxisX(hProcess, currentAddressXavatarAxis, offsetXavatarAxis, sizeof(offsetXavatarAxis) / sizeof(offsetXavatarAxis[0]), &avatarAxisX)) {}
 
-    // Lire l'axe Y pour avatarAxis Y
-    DWORD_PTR currentAddressYavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetY_avatarAxis;
-    if (!readavatarAxisY(hProcess, currentAddressYavatarAxis, offsetYavatarAxis, sizeof(offsetYavatarAxis) / sizeof(offsetYavatarAxis[0]), &avatarAxisY)) {
-        usedPrimaryY = false; // Indiquer que l'offset principal a échoué
-        errorY = TRUE; // Enregistrer l'erreur directement si la lecture échoue
-    }
+// Lire l'axe Y pour avatarAxis Y
+DWORD_PTR currentAddressYavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetY_avatarAxis;
+if (!readavatarAxisY(hProcess, currentAddressYavatarAxis, offsetYavatarAxis, sizeof(offsetYavatarAxis) / sizeof(offsetYavatarAxis[0]), &avatarAxisY)) {}
 
     // Log message de réussite une seule fois
     if (!successMessageLogged && !(errorX || errorY || errorZ)) {

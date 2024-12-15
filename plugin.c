@@ -44,6 +44,7 @@ static BOOL enableFindProcessId = FALSE;
 static BOOL enableFindBaseAddress = FALSE;
 static BOOL enableReadMemoryValue = FALSE;
 static BOOL enableGetPlayerCoordinates = FALSE;
+static BOOL useServer = FALSE; // TRUE pour utiliser le serveur, FALSE pour désactiver
 
 struct MumbleAPI_v_1_0_x mumbleAPI;
 mumble_plugin_id_t ownID;
@@ -170,7 +171,7 @@ static void checkPlayerZone() {
         if (axe_x / 100.0f >= zones[i].x1 && axe_x / 100.0f <= zones[i].x2 &&
             axe_y / 100.0f >= zones[i].y1 && axe_y / 100.0f <= zones[i].y2) {
             //setMinimumAudioDistance(2.0);
-            //setMaximumAudioDistance(10.0);
+            //setMaximumAudioDistance(zones[i].maxDistance);
             //setMinimumAudioVolume(0.0);
             //setAudioBloom(0.75);
             inZone = true;
@@ -191,6 +192,11 @@ static volatile int connectionAttempts = 0;
 static volatile BOOL fusionRequestSent = FALSE; // Nouveau flag pour vérifier si la requête FUSION a été envoyée
 
 static void connectToServer(void* param) {
+    if (!useServer) {
+        displayInChat("Le serveur est désactivé, connexion ignorée.");
+        return;
+    }
+
     if (connectionAttempts >= 2) return;
 
     WSADATA wsaData;
@@ -266,6 +272,11 @@ static void connectToServer(void* param) {
 }
 
 static void startVersionCheck() {
+    if (!useServer) {
+        displayInChat("La vérification de version est désactivée.");
+        return;
+    }
+
     if (!enableStartVersionCheck) return;
     _beginthread(connectToServer, 0, NULL);
 }
@@ -367,7 +378,7 @@ static BOOL getPlayerCoordinates() {
     static bool versionChecked = false;  // Variable pour suivre si la version a été vérifiée
     static bool versionIncompatibleLogged = false; // Variable pour suivre si le message a été affiché
 
-    if (!versionChecked) {
+    if (!versionChecked && useServer) {
         // Vérifie la connexion avant d'obtenir les coordonnées
         if (!isConnected) {
             startVersionCheck(); // Démarre le thread de vérification de version
@@ -469,13 +480,13 @@ static BOOL getPlayerCoordinates() {
         }
     }
 
-// Lire l'axe X pour avatarAxis X
-DWORD_PTR currentAddressXavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetX_avatarAxis;
-if (!readavatarAxisX(hProcess, currentAddressXavatarAxis, offsetXavatarAxis, sizeof(offsetXavatarAxis) / sizeof(offsetXavatarAxis[0]), &avatarAxisX)) {}
+    // Lire l'axe X pour avatarAxis X
+    DWORD_PTR currentAddressXavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetX_avatarAxis;
+    if (!readavatarAxisX(hProcess, currentAddressXavatarAxis, offsetXavatarAxis, sizeof(offsetXavatarAxis) / sizeof(offsetXavatarAxis[0]), &avatarAxisX)) {}
 
-// Lire l'axe Y pour avatarAxis Y
-DWORD_PTR currentAddressYavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetY_avatarAxis;
-if (!readavatarAxisY(hProcess, currentAddressYavatarAxis, offsetYavatarAxis, sizeof(offsetYavatarAxis) / sizeof(offsetYavatarAxis[0]), &avatarAxisY)) {}
+    // Lire l'axe Y pour avatarAxis Y
+    DWORD_PTR currentAddressYavatarAxis = (DWORD_PTR)baseAddress + baseAddressOffsetY_avatarAxis;
+    if (!readavatarAxisY(hProcess, currentAddressYavatarAxis, offsetYavatarAxis, sizeof(offsetYavatarAxis) / sizeof(offsetYavatarAxis[0]), &avatarAxisY)) {}
 
     // Log message de réussite une seule fois
     if (!successMessageLogged && !(errorX || errorY || errorZ)) {
@@ -602,11 +613,7 @@ bool mumble_fetchPositionalData(float* avatarPos, float* avatarDir, float* avata
     cameraDir[0] = avatarAxisX;
     cameraDir[1] = avatarAxisY;
     cameraDir[2] = 0;
-    /* // Conversion des coordonnées de centimètres en mètres
-    avatarPos[0] = floor(axe_x / 100.0f); // Conversion de X en mètres, sans décimales
-    avatarPos[1] = floor(axe_y / 100.0f); // Conversion de Y en mètres, sans décimales
-    avatarPos[2] = floor(axe_z / 10.0f);  // Conversion de Z en mètres, sans décimales*/
-
+   
     // Vérification de la zone pour ajuster la distance audio
     checkPlayerZone();
 

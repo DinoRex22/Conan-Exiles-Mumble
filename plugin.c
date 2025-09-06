@@ -29,6 +29,8 @@
 #include <commdlg.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <locale.h>
+#include <ctype.h>
 
 
 
@@ -572,28 +574,29 @@ static BOOL readModFileData(struct ModFileData* data) {
     char* endptr;
     data->valid = FALSE;
 
-    // Convert data to string readable by strstr | Convertir les données en une chaîne de caractères lisible par strstr
-    // Replace special characters with space and commas with dots | Remplace les caractères spéciaux par un espace et les virgules par des points
+    // --- NOUVELLE LOGIQUE DE NETTOYAGE ---
+    // Convertit la chaîne pour qu'elle soit lisible par strtod, quelle que soit la locale.
+    // 1. Remplace la virgule décimale (,) par un point (.).
+    // 2. Supprime les séparateurs de milliers (points, espaces, etc.).
     char cleanBuffer[256] = { 0 };
     int cleanIndex = 0;
-    for (size_t i = 0; i < bytesRead; ++i) {
+    for (size_t i = 0; i < bytesRead && cleanIndex < sizeof(cleanBuffer) - 1; ++i) {
         char c = buffer[i];
-        if (c >= 32 || c == '\n' || c == '\r') {
-            if (c == ',') {
-                cleanBuffer[cleanIndex++] = '.';
-            }
-            else if (c == '\t') {
-                cleanBuffer[cleanIndex++] = ' ';
-            }
-            else {
-                cleanBuffer[cleanIndex++] = c;
-            }
+
+        // Si c'est un chiffre, une lettre (pour "SEQ=", "X="...), un signe moins ou un égal
+        if (isalnum(c) || c == '-' || c == '=') {
+            cleanBuffer[cleanIndex++] = c;
         }
+        else if (c == ',') { // La virgule est TOUJOURS le séparateur décimal
+            cleanBuffer[cleanIndex++] = '.';
+        }
+        // Ignore tous les autres caractères (espaces, points de séparation, etc.)
     }
     cleanBuffer[cleanIndex] = '\0';
+
     if (enableLogModFile) {
         char logBuffer[300];
-        snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: Contenu du fichier nettoyé pour le parsing: %s", buffer);
+        snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: Contenu du fichier nettoyé pour le parsing: %s", cleanBuffer);
         mumbleAPI.log(ownID, logBuffer);
     }
 
@@ -697,7 +700,8 @@ static BOOL readModFileData(struct ModFileData* data) {
             snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: YAWZ lu: %f", data->yawZ);
             mumbleAPI.log(ownID, logBuffer);
         }
-    } else {
+    }
+    else {
         data->yawZ = 0.0f; // Default to 0 if not found for backward compatibility
         if (enableLogModFile) {
             mumbleAPI.log(ownID, u8"INFO DE PARSING: 'YAWZ=' non trouvé. Utilisation de la valeur par défaut 0.0.");
@@ -1270,6 +1274,7 @@ static BOOL getPlayerCoordinates() {
 // Plugin initialization function
 mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
     ownID = pluginID;
+    setlocale(LC_NUMERIC, "C");
 
     // Enable all functions
     enableSetMaximumAudioDistance = TRUE;
@@ -1448,9 +1453,9 @@ struct MumbleStringWrapper mumble_getName() {
 // Get plugin version | Obtenir la version du plugin
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 }; // Initialize version structure | Initialiser la structure de version
-    version.major = 1; // Major version number | Numéro de version majeure
+    version.major = 2; // Major version number | Numéro de version majeure
     version.minor = 0; // Minor version number | Numéro de version mineure
-    version.patch = 1; // Patch version number | Numéro de version de correctif
+    version.patch = 2; // Patch version number | Numéro de version de correctif
 
     return version;
 }

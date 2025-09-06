@@ -11,7 +11,7 @@
 // and do not affect or modify the copyright 
 // or licensing terms of the original Mumble code.
 
-// Dino_Rex Public License v1.0
+// Dino_Rex Public License v1.1
 
 // Copyright (c) 2025 Dino_Rex
 
@@ -40,14 +40,20 @@
 //       are also allowed, but a clear disclaimer must state that 
 //       the donation is intended solely for that person and NOT for the official creator 
 //       of the Mumble plugin for Conan Exiles (Dino_Rex).
-// 5. Disclaimer of Warranty: 
+// 5. Non-Removal of License Terms: The clauses of this license are mandatory 
+//    and must remain included in any copy, distribution, or modified version of the Software. 
+//    Removal, alteration, or omission of these clauses is strictly prohibited.
+// 6. Disclaimer of Warranty: 
 //    The Software is provided "as is", without any warranty of any kind, express or implied, 
-//    including but not limited to the warranties of merchantability, fitness for a particular purpose 
+//    including but not limited to warranties of merchantability, fitness for a particular purpose, 
 //    and non-infringement. 
-//    In no event shall the author (Dino_Rex) be held liable for any claim, damages, 
+//    In no event shall the author (Dino_Rex) be liable for any claim, damages, 
 //    or other liability, whether in an action of contract, tort, or otherwise, 
-//    arising from, out of, or in connection with the Software 
-//    or the use or other dealings in the Software.
+//    arising from, out of, or in connection with the Software or the use 
+//    or other dealings in the Software.
+// 7. Acceptance of Terms: By downloading, using, copying, modifying, merging, publishing, 
+//    or distributing this Software (in whole or in part), you acknowledge that you have read, 
+//    understood, and agreed to be bound by all the terms and conditions of this license.
 
 #include "MumblePlugin_v_1_0_x.h"
 #include <winsock2.h>

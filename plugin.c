@@ -109,9 +109,9 @@ HWND hStatus; // Status control handle | Handle du contrôle de statut
 HFONT hFont; // Font handle | Handle de police
 
 // Concise explanatory text | Texte explicatif concis
-const wchar_t* infoText1 = L"Indiquez le dossier de Conan Exiles."; // Indicate Conan Exiles folder | Indiquez le dossier de Conan Exiles
-const wchar_t* infoText2 = L"Exemple : C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles"; // Example path | Exemple de chemin
-const wchar_t* infoText3 = L"Le dossier 'Saved' doit exister dans ConanSandbox pour fonctionner."; // Saved folder requirement | Exigence du dossier Saved
+const wchar_t* infoText1 = L"Please provide the path to your Conan Exiles folder."; // Indicate Conan Exiles folder | Indiquez le dossier de Conan Exiles
+const wchar_t* infoText2 = L"Example: C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles"; // Example path | Exemple de chemin
+const wchar_t* infoText3 = L"The 'Saved' folder must exist inside 'ConanSandbox' for the plugin to work."; // Saved folder requirement | Exigence du dossier Saved
 
 volatile BOOL isConnected = FALSE; // Connection indicator | Indicateur de connexion
 
@@ -289,7 +289,7 @@ int savedExistsInFolder(const wchar_t* folderPath) {
 void writePatch(const wchar_t* folderPath) {
     wchar_t* configFolder = getConfigFolderPath();
     if (!configFolder) {
-        SetWindowTextW(hStatus, L"Erreur : Impossible d'accéder au dossier Documents");
+        SetWindowTextW(hStatus, L"Error: Could not access the Documents folder.");
         return;
     }
 
@@ -299,7 +299,7 @@ void writePatch(const wchar_t* folderPath) {
 
     // Debug log | Log pour débugger
     if (enableLogConfig) {
-        mumbleAPI.log(ownID, "Tentative de création du fichier plugin.cfg dans Documents");
+        mumbleAPI.log(ownID, "Attempting to create plugin.cfg in Documents.");
     }
 
     FILE* file = _wfopen(configFile, L"w");
@@ -309,7 +309,7 @@ void writePatch(const wchar_t* folderPath) {
         if (enableLogConfig) {
             mumbleAPI.log(ownID, errorMsg);
         }
-        SetWindowTextW(hStatus, L"Erreur : Impossible de créer le fichier de configuration");
+        SetWindowTextW(hStatus, L"Error: Could not create the configuration file.");
         return;
     }
 
@@ -318,7 +318,7 @@ void writePatch(const wchar_t* folderPath) {
     fwprintf(file, L"SavedPath=%s\n", savedPath);
     fclose(file);
 
-    SetWindowTextW(hStatus, L"Configuration sauvegardée dans Documents!");
+    SetWindowTextW(hStatus, L"Configuration saved in Documents!");
 }
 
 // Modern folder browser (IFileDialog) | Explorateur de dossier moderne (IFileDialog)
@@ -329,7 +329,7 @@ void browseFolderModern(HWND hwnd) {
         DWORD options;
         pfd->lpVtbl->GetOptions(pfd, &options);
         pfd->lpVtbl->SetOptions(pfd, options | FOS_PICKFOLDERS);
-        pfd->lpVtbl->SetTitle(pfd, L"Selectionnez le dossier Conan Exiles");
+        pfd->lpVtbl->SetTitle(pfd, L"Select the Conan Exiles folder");
         hr = pfd->lpVtbl->Show(pfd, hwnd);
         if (SUCCEEDED(hr)) {
             IShellItem* psi;
@@ -378,7 +378,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             20, 75, 660, 25, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(control);
 
-        control = CreateWindowW(L"STATIC", L"Choisissez le dossier Conan Exiles:", WS_VISIBLE | WS_CHILD,
+        control = CreateWindowW(L"STATIC", L"Select the Conan Exiles folder:", WS_VISIBLE | WS_CHILD,
             20, 110, 350, 25, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(control);
 
@@ -388,12 +388,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         ApplyFontToControl(hEdit);
 
         // Create browse button | Créer le bouton parcourir
-        control = CreateWindowW(L"BUTTON", L"Parcourir...", WS_VISIBLE | WS_CHILD,
+        control = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD,
             540, 140, 120, 30, hwnd, (HMENU)1, NULL, NULL);
         ApplyFontToControl(control);
 
         // Create validate button | Créer le bouton valider
-        control = CreateWindowW(L"BUTTON", L"Valider", WS_VISIBLE | WS_CHILD,
+        control = CreateWindowW(L"BUTTON", L"Validate", WS_VISIBLE | WS_CHILD,
             300, 190, 120, 35, hwnd, (HMENU)2, NULL, NULL);
         ApplyFontToControl(control);
 
@@ -413,14 +413,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             wchar_t folderPath[MAX_PATH];
             GetWindowTextW(hEdit, folderPath, MAX_PATH);
             if (!savedExistsInFolder(folderPath)) {
-                SetWindowTextW(hStatus, L"Le dossier Saved n'existe pas dans ConanSandbox. "
-                    L"Il doit etre present pour que le plugin fonctionne.");
+                SetWindowTextW(hStatus, L"The 'Saved' folder does not exist in ConanSandbox. "
+                    L"It must be present for the plugin to work.");
                 break;
             }
             writePatch(folderPath);
             // Update mod file path based on selected folder | Mise à jour du chemin du fichier mod en fonction du dossier sélectionné
             snprintf(modFilePath, MAX_PATH, "%s\\ConanSandbox\\Saved\\Pos.txt", folderPath);
-            SetWindowTextW(hStatus, L"Chemin du dossier Saved enregistre!");
+            SetWindowTextW(hStatus, L"Saved folder path has been configured!");
             closeTimer = SetTimer(hwnd, 1, 3000, NULL);
             break;
         }
@@ -490,11 +490,11 @@ void showPathSelectionDialog() {
     wc.lpszClassName = CLASS_NAME;
     RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Configuration du Patch",
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Path Configuration",
         WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX),
         CW_USEDEFAULT, CW_USEDEFAULT, 700, 320,
         NULL, NULL, wc.hInstance, NULL);
-    if (!hwnd) return -1;
+    if (!hwnd) return;
 
     ShowWindow(hwnd, SW_SHOW);
     MSG msg = { 0 };
@@ -503,7 +503,7 @@ void showPathSelectionDialog() {
         DispatchMessageW(&msg);
     }
     CoUninitialize();
-    return 0;
+    return;
 }
 
 // Path selection dialog thread function | Fonction de thread pour la boîte de dialogue de sélection de chemin

@@ -3,12 +3,44 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at https://www.mumble.info/LICENSE.
 
-// The following conditions apply exclusively to the code authored by Dino_Rex and do not affect or modify the copyright or licensing terms of the original Mumble code.
+// The following conditions apply exclusively to the code written by Dino_Rex 
+// and do not affect or modify the copyright 
+// or licensing terms of the original Mumble code.
 
-MIT License
+// Dino_Rex Public License v1.0
 
-Copyright (c) 2024 Dino_Rex
+// Copyright (c) 2025 Dino_Rex
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is provided to do so, subject to the following conditions:
+// Permission is hereby granted, free of charge, to any person obtaining a copy 
+// of this software and the associated documentation files (the "Software"), 
+// to use the Software without restriction, including without limitation 
+// the rights to use, copy, modify, merge, publish, distribute, 
+// and/or sublicense the Software, 
+// and to permit persons to whom the Software is furnished to do so, 
+// subject to the following conditions:
 
-1. You may use the code as you wish, provided that my Discord handle (Dino_Rex) is cited wherever the plugin is published and in the description of the compiled Mumble plugin.
+// 1. Attribution: The Discord handle of the original source code creator 
+// (Dino_Rex) must be cited wherever the plugin is published 
+// as well as in the description of the compiled Mumble plugin.
+// 2. Share-Alike: Any public distribution or deployment of this software, 
+// or of any modified version of it (e.g., for use on a public Conan Exiles server), 
+// requires that the complete corresponding source code be made publicly available 
+// under the same terms as this license.
+// 3. Free of Charge: This software and all its modified versions must remain 
+// entirely free of charge. It is strictly forbidden to sell or monetize 
+// the Software, whether directly or indirectly.
+// 4. Donations: 
+//    a) Voluntary donations to the official creator of the Mumble plugin for Conan Exiles 
+//       (Dino_Rex) are allowed. 
+//    b) Donations made to other persons (who have modified, published, or redistributed the Software) 
+//       are also allowed, but a clear disclaimer must state that 
+//       the donation is intended solely for that person and NOT for the official creator 
+//       of the Mumble plugin for Conan Exiles (Dino_Rex).
+// 5. Disclaimer of Warranty: 
+//    The Software is provided "as is", without any warranty of any kind, express or implied, 
+//    including but not limited to the warranties of merchantability, fitness for a particular purpose 
+//    and non-infringement. 
+//    In no event shall the author (Dino_Rex) be held liable for any claim, damages, 
+//    or other liability, whether in an action of contract, tort, or otherwise, 
+//    arising from, out of, or in connection with the Software 
+//    or the use or other dealings in the Software.

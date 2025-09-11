@@ -108,6 +108,19 @@ static BOOL enableGetPlayerCoordinates = FALSE; // Enable player coordinates ret
 static BOOL useServer = FALSE; // TRUE to use server, FALSE to disable | TRUE pour utiliser le serveur, FALSE pour désactiver
 static BOOL getPlayerCoordinates(void); // Forward declaration | Déclaration avant
 
+// Offset Control Variables | Variables pour contrôler l'activation des offsets
+static BOOL enableMemoryOffsets = FALSE; // Enable memory offset system | Active le système d'offsets mémoire
+static BOOL allowOffsetsFromConfig = TRUE; // Allow enabling offsets from config file | Permet d'activer les offsets depuis le fichier de config
+
+// Channel management variables | Variables de gestion des canaux  
+static mumble_channelid_t hubChannelID = -1; // Hub channel ID | ID du canal hub
+static mumble_channelid_t ingameChannelID = -1; // In-Game channel ID | ID du canal In-Game  
+static mumble_channelid_t lastTargetChannel = -1; // Last target channel | Dernier canal cible
+static mumble_channelid_t lastValidChannel = -1; // Last valid channel where user should be | Dernier canal valide où l'utilisateur devrait être
+static BOOL channelManagementActive = FALSE; // Channel management active flag | Indicateur de gestion des canaux active
+static BOOL enableAutomaticChannelChange = FALSE; // Enable automatic channel switching | Active le changement automatique de salon
+static ULONGLONG lastChannelCheck = 0; // Last channel check timestamp | Horodatage de la dernière vérification des canaux
+
 // YAW Control Variables | Variables pour le contrôle du YAW
 static BOOL enableYawOffsets = TRUE; // Enable YAW offset calculations | Active les calculs d'offsets YAW
 static BOOL useNativeTwoYawOffsets = FALSE; // Enable native two YAW offsets mode | Active le mode offsets natifs YAW séparés
@@ -128,7 +141,7 @@ float avatarAxisZ = 0.0f; // Avatar Z direction | Direction Z de l'avatar
 // Mod Data Structure | Structure pour stocker les données du mod
 struct ModFileData {
     int seq; // Sequence number | Numéro de séquence
-    float x, y, z, yaw, yawZ; // Position and rotation data | Données de position et rotation
+    float x, y, z, yaw, yawY; // Position and rotation data | Données de position et rotation ✅ CHANGÉ yawZ → yawY
     BOOL valid; // Data validity flag | Indicateur de validité des données
 };
 
@@ -140,7 +153,7 @@ static int lastSeq = -1; // Last read SEQ to detect changes | Dernier SEQ lu pou
 static BOOL modDataValid = FALSE; // Mod data validity flag | Indicateur de validité des données mod
 static char modFilePath[MAX_PATH] = ""; // Mod file path | Chemin du fichier mod
 static BOOL coordinatesValid = FALSE; // Coordinates validity flag | Indicateur de validité des coordonnées
-static struct ModFileData currentModData = { 0, 0.0f, 0.0f, 0.0f, 0.0f, FALSE }; // Current mod data | Données mod actuelles
+static struct ModFileData currentModData = { 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, FALSE }; // Add a 0.0f for yawY | Ajout d'un 0.0f pour yawY
 static ULONGLONG lastModDataTick = 0; // High resolution timestamp of last valid mod read | Horodatage HAUTE RÉSOLUTION de la dernière lecture valide du mod
 
 // GUI Variables and Other Necessities | Variables d'interface graphique et autres nécessaires
@@ -192,7 +205,7 @@ static void parseZones(const char* response) {
     // Search for beginning of "ZONES:" section in response | Cherche le début de la section "ZONES:" dans la réponse
     const char* zonesData = strstr(response, "ZONES: ");
     if (zonesData == NULL) {
-        displayInChat("Erreur: données de zones non trouvées dans la réponse");
+        displayInChat("Error: zone data not found in response | Erreur: données de zones non trouvées dans la réponse");
         return;
     }
 
@@ -212,7 +225,7 @@ static void parseZones(const char* response) {
     // Allocate memory for zones | Alloue la mémoire pour les zones
     zones = (struct Zone*)malloc(zoneCount * sizeof(struct Zone));
     if (zones == NULL) {
-        displayInChat("Erreur d'allocation de mémoire pour les zones");
+        displayInChat("Memory allocation error for zones | Erreur d'allocation de mémoire pour les zones");
         return;
     }
 
@@ -222,7 +235,7 @@ static void parseZones(const char* response) {
         int result = sscanf_s(p, "%f,%f,%f,%f,%lf", &zones[i].x1, &zones[i].y1, &zones[i].x2, &zones[i].y2, &zones[i].maxDistance);
         if (result != 5) {
             char errorMessage[256];
-            snprintf(errorMessage, sizeof(errorMessage), "Erreur d'analyse pour la zone %zu", i + 1);
+            snprintf(errorMessage, sizeof(errorMessage), "Analysis error for zone %zu | Erreur d'analyse pour la zone %zu", i + 1);
             displayInChat(errorMessage);
             free(zones);
             zones = NULL;
@@ -292,10 +305,10 @@ static void checkPlayerZone() {
     }
 
     if (!inZone) {
-        //setMinimumAudioDistance(2.0); // Set default audio settings | Définir les paramètres audio par défaut
-        //setMaximumAudioDistance(10.0);
+        //setMinimumAudioDistance(5.0); // Set default audio settings | Définir les paramètres audio par défaut
+        //setMaximumAudioDistance(25.0);
         //setMinimumAudioVolume(0.0);
-        //setAudioBloom(0.75);
+        //setAudioBloom(0.2);
     }
 }
 
@@ -317,6 +330,76 @@ wchar_t* getConfigFolderPath() {
     }
 
     return NULL;
+}
+
+// Automatic channel management based on coordinates validity | Gestion automatique des canaux selon la validité des coordonnées
+static void manageChannelBasedOnCoordinates() {
+    if (!enableAutomaticChannelChange) return; // Check if automatic change is enabled | Vérifier si le changement automatique est activé
+    if (!channelManagementActive) return;
+
+    ULONGLONG currentTick = GetTickCount64();
+    if (currentTick - lastChannelCheck < 500) return; // 0.5 seconds | 0.5 seconde
+    lastChannelCheck = currentTick;
+
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    bool synchronized = false;
+    if (mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized) != MUMBLE_STATUS_OK || !synchronized) {
+        return;
+    }
+
+    mumble_userid_t localUserID;
+    if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    mumble_channelid_t currentChannel;
+    if (mumbleAPI.getChannelOfUser(ownID, connection, localUserID, &currentChannel) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    if (coordinatesValid) {
+        if (currentChannel != ingameChannelID && ingameChannelID != -1) {
+            mumbleAPI.requestUserMove(ownID, connection, localUserID, ingameChannelID, NULL);
+            lastValidChannel = ingameChannelID;
+        }
+    }
+    else {
+        if (currentChannel != hubChannelID && hubChannelID != -1) {
+            mumbleAPI.requestUserMove(ownID, connection, localUserID, hubChannelID, NULL);
+            lastValidChannel = hubChannelID;
+        }
+    }
+}
+
+// Initialize channel IDs | Initialiser les IDs des canaux
+static void initializeChannelIDs() {
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    bool synchronized = false;
+    if (mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized) != MUMBLE_STATUS_OK || !synchronized) {
+        return;
+    }
+
+    // Find hub channel | Trouver le canal hub
+    if (mumbleAPI.findChannelByName(ownID, connection, "hub", &hubChannelID) != MUMBLE_STATUS_OK) {
+        hubChannelID = 0; // Default channel if hub doesn't exist | Canal par défaut si hub n'existe pas
+    }
+
+    // Find In-Game channel | Trouver le canal In-Game
+    if (mumbleAPI.findChannelByName(ownID, connection, "ingame", &ingameChannelID) != MUMBLE_STATUS_OK) {
+        ingameChannelID = -1; // Not found | Pas trouvé
+    }
+
+    if (hubChannelID != -1 && ingameChannelID != -1) {
+        channelManagementActive = TRUE;
+    }
 }
 
 // Check if Saved folder exists in game folder | Vérifie que le dossier Saved existe dans le dossier du jeu
@@ -358,6 +441,8 @@ void writePatch(const wchar_t* folderPath) {
     wchar_t savedPath[MAX_PATH];
     swprintf(savedPath, MAX_PATH, L"%s\\ConanSandbox\\Saved", folderPath);
     fwprintf(file, L"SavedPath=%s\n", savedPath);
+    fwprintf(file, L"EnableMemoryOffsets=false\n");
+    fwprintf(file, L"EnableAutomaticChannelChange=false\n");
     fclose(file);
 
     SetWindowTextW(hStatus, L"Configuration saved in Documents!");
@@ -616,23 +701,23 @@ static BOOL readModFileData(struct ModFileData* data) {
     char* endptr;
     data->valid = FALSE;
 
-    // --- NOUVELLE LOGIQUE DE NETTOYAGE ---
-    // Convertit la chaîne pour qu'elle soit lisible par strtod, quelle que soit la locale.
-    // 1. Remplace la virgule décimale (,) par un point (.).
-    // 2. Supprime les séparateurs de milliers (points, espaces, etc.).
+    // New cleaning logic for parsing | Nouvelle logique de nettoyage pour le parsing
+    // Convert string to be readable by strtod regardless of locale | Convertit la chaîne pour qu'elle soit lisible par strtod, quelle que soit la locale
+    // 1. Replace decimal comma (,) with dot (.) | Remplace la virgule décimale (,) par un point (.)
+    // 2. Remove thousand separators (dots, spaces, etc.) | Supprime les séparateurs de milliers (points, espaces, etc.)
     char cleanBuffer[256] = { 0 };
     int cleanIndex = 0;
     for (size_t i = 0; i < bytesRead && cleanIndex < sizeof(cleanBuffer) - 1; ++i) {
         char c = buffer[i];
 
-        // Si c'est un chiffre, une lettre (pour "SEQ=", "X="...), un signe moins ou un égal
+
         if (isalnum(c) || c == '-' || c == '=') {
             cleanBuffer[cleanIndex++] = c;
         }
-        else if (c == ',') { // La virgule est TOUJOURS le séparateur décimal
+        else if (c == ',') { // Comma is ALWAYS the decimal separator | La virgule est TOUJOURS le séparateur décimal
             cleanBuffer[cleanIndex++] = '.';
         }
-        // Ignore tous les autres caractères (espaces, points de séparation, etc.)
+        // Ignore all other characters (spaces, separation dots, etc.) | Ignore tous les autres caractères (espaces, points de séparation, etc.)
     }
     cleanBuffer[cleanIndex] = '\0';
 
@@ -732,21 +817,21 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
 
-    // Search and read YAWZ | Rechercher et lire le YAWZ
-    char* yawz_ptr = strstr(cleanBuffer, "YAWZ=");
-    if (yawz_ptr) {
-        yawz_ptr += 5;
-        data->yawZ = (float)strtod(yawz_ptr, &endptr);
+    // Search and read YAWY | Rechercher et lire le YAWY
+    char* yawy_ptr = strstr(cleanBuffer, "YAWY=");
+    if (yawy_ptr) {
+        yawy_ptr += 5;
+        data->yawY = (float)strtod(yawy_ptr, &endptr);
         if (enableLogModFile) {
             char logBuffer[100];
-            snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: YAWZ lu: %f", data->yawZ);
+            snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: YAWY lu: %f", data->yawY);  // ✅ Log YAWY
             mumbleAPI.log(ownID, logBuffer);
         }
     }
     else {
-        data->yawZ = 0.0f; // Default to 0 if not found for backward compatibility
+        data->yawY = 0.0f;
         if (enableLogModFile) {
-            mumbleAPI.log(ownID, u8"INFO DE PARSING: 'YAWZ=' non trouvé. Utilisation de la valeur par défaut 0.0.");
+            mumbleAPI.log(ownID, u8"INFO DE PARSING: 'YAWY=' non trouvé. Utilisation de la valeur par défaut 0.0.");  // ✅ Log YAWY
         }
     }
 
@@ -757,7 +842,6 @@ static BOOL readModFileData(struct ModFileData* data) {
     return TRUE;
 }
 
-// Thread that monitors mod file and manages offsets | Thread qui surveille le fichier mod et gère les offsets
 static void modFileWatcherThread(void* arg) {
     while (enableGetPlayerCoordinates) {
         BOOL isModActive = checkModFileActive();
@@ -774,41 +858,33 @@ static void modFileWatcherThread(void* arg) {
             }
         }
 
-        // --- MERGED LOGIC --- | --- LOGIQUE FUSIONNÉE ---
         ULONGLONG currentTick = GetTickCount64();
 
-        // If new mod data was read, use it and update timer | Si de nouvelles données du mod ont été lues, on les utilise et on met à jour le minuteur
         if (newModDataRead) {
             axe_x = currentModData.x;
             axe_y = currentModData.y;
             axe_z = currentModData.z;
-            
-            // Conversion of YAW to directional vectors for Mumble | Conversion de YAW en vecteurs directionnels pour Mumble
-            float yawRad = currentModData.yaw * 3.14159265f / 180.0f;
-            avatarAxisX = (float)cos(yawRad);
-            avatarAxisY = (float)sin(yawRad);
 
-            // Convert YAWZ (pitch) from mod file using the same logic as offsets
-            float pitchRad = -currentModData.yawZ * 3.14159265f / 180.0f;
-            avatarAxisZ = sinf(pitchRad);
+            float yawRad = currentModData.yaw * 3.14159265f / 180.0f;
+            avatarAxisX = -(float)cos(yawRad);
+            avatarAxisY = sinf(-currentModData.yawY * 3.14159265f / 180.0f);
+            avatarAxisZ = -(float)sin(yawRad);
 
             coordinatesValid = TRUE;
-            useModFile = TRUE; // Confirm we're using mod | On confirme qu'on utilise le mod
-            lastModDataTick = currentTick; // Update high resolution timestamp | On met à jour l'horodatage HAUTE RÉSOLUTION
+            useModFile = TRUE;
+            lastModDataTick = currentTick;
         }
-        // Otherwise, if mod is no longer active | Sinon, si le mod n'est plus actif
         else if (!isModActive) {
-            // Check if grace period (1.5s) has elapsed | On vérifie si la période de grâce (1.5s) est écoulée
             if (currentTick - lastModDataTick > 1500) {
-                useModFile = FALSE; // Grace period is over, switch to offsets | La grâce est terminée, on passe aux offsets
+                useModFile = FALSE;
             }
         }
 
-        // If not using mod (either never active or grace period ended) | Si on n'utilise pas le mod (soit parce qu'il n'a jamais été actif, soit parce que la grâce est terminée)
         if (!useModFile) {
-            if (getPlayerCoordinates()) {
+            if (enableMemoryOffsets && getPlayerCoordinates()) {
                 coordinatesValid = TRUE;
-            } else {
+            }
+            else {
                 coordinatesValid = FALSE;
             }
         }
@@ -825,7 +901,7 @@ static volatile BOOL fusionRequestSent = FALSE; // New flag to check if FUSION r
 static void connectToServer(void* param) {
     if (!useServer) {
         if (enableLogServer) {
-            displayInChat("Le serveur est désactivé, connexion ignorée.");
+            displayInChat("Server is disabled, connection ignored | Le serveur est désactivé, connexion ignorée");
         }
         return;
     }
@@ -863,7 +939,7 @@ static void connectToServer(void* param) {
     char* buffer = (char*)malloc(16384);
     if (buffer == NULL) {
         if (enableLogServer) {
-            displayInChat("Erreur d'allocation de mémoire");
+            displayInChat("Memory allocation error | Erreur d'allocation de mémoire");
         }
         closesocket(sock);
         WSACleanup();
@@ -899,7 +975,7 @@ static void connectToServer(void* param) {
     }
     else {
         if (enableLogServer) {
-            displayInChat("Erreur lors de la lecture de la réponse du serveur");
+            displayInChat("Error reading server response | Erreur lors de la lecture de la réponse du serveur");
         }
     }
 
@@ -916,7 +992,7 @@ static void connectToServer(void* param) {
 static void startVersionCheck() {
     if (!useServer) {
         if (enableLogServer) {
-            displayInChat("La vérification de version est désactivée.");
+            displayInChat("Version checking is disabled | La vérification de version est désactivée");
         }
         return;
     }
@@ -1051,6 +1127,11 @@ static BOOL readYawZ(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets,
 
 // Function to get player coordinates | Fonction pour obtenir les coordonnées du joueur
 static BOOL getPlayerCoordinates() {
+    // Check if memory offsets are enabled
+    if (!enableMemoryOffsets) {
+        return FALSE;
+    }
+
     if (!enableGetPlayerCoordinates) return FALSE;  // Check if enabled | Vérification si activée
 
     // Before reading coordinates, check version | Avant de lire les coordonnées, vérifiez la version
@@ -1189,7 +1270,7 @@ static BOOL getPlayerCoordinates() {
     // Yaw offset handling if enabled | Gestion des offsets yaw si activés
     if (enableYawOffsets) {
         BOOL yawErrorX = FALSE, yawErrorY = FALSE, yawErrorZ = FALSE;
-        
+
         if (useNativeTwoYawOffsets) {
             // Mode 2: Native separate offsets for X and Y
             DWORD_PTR currentAddressYawXNative = (DWORD_PTR)baseAddress + baseAddressOffsetYawX_Native;
@@ -1202,7 +1283,7 @@ static BOOL getPlayerCoordinates() {
                     }
                 }
             }
-            
+
             DWORD_PTR currentAddressYawYNative = (DWORD_PTR)baseAddress + baseAddressOffsetYawY_Native;
             if (!readavatarAxisY(hProcess, currentAddressYawYNative, offsetYawYNative, sizeof(offsetYawYNative) / sizeof(offsetYawYNative[0]), &avatarAxisY)) {
                 usedPrimaryYawY = false;
@@ -1213,7 +1294,8 @@ static BOOL getPlayerCoordinates() {
                     }
                 }
             }
-        } else {
+        }
+        else {
             // Mode 1: Single yaw offset converted to X/Y
             DWORD_PTR currentAddressYawSingle = (DWORD_PTR)baseAddress + baseAddressOffsetYaw_Single;
             if (!readYawToAxes(hProcess, currentAddressYawSingle, offsetYawSingle, sizeof(offsetYawSingle) / sizeof(offsetYawSingle[0]), &avatarAxisX, &avatarAxisY)) {
@@ -1239,7 +1321,8 @@ static BOOL getPlayerCoordinates() {
                     yawErrorZ = TRUE;
                     avatarAxisZ = 0.0f; // Default to 0 on failure
                 }
-            } else {
+            }
+            else {
                 avatarAxisZ = 0.0f; // Default to 0 if backup is disabled and primary fails
             }
         }
@@ -1256,7 +1339,7 @@ static BOOL getPlayerCoordinates() {
         if (enableLogOffsets) {
             //mumbleAPI.log(ownID, successMsg);
         }
-        successMessageLogged = true; // Mark that message was logged | Marque que le message a été logué
+        successMessageLogged = true; // Mark that message was logged | Marquer que le message a été logué
     }
     else if (errorX || errorY || errorZ) {
         // Reset successMessageLogged if an error occurs | Réinitialiser successMessageLogged si une erreur se produit
@@ -1311,6 +1394,79 @@ static BOOL getPlayerCoordinates() {
 
     CloseHandle(hProcess);
     return !(errorX || errorY || errorZ);
+}
+
+// Read configuration from file | Lire la configuration depuis le fichier
+static void readConfigurationSettings() {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) return;
+
+    wchar_t configFile[MAX_PATH];
+    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+    // Valeurs par défaut (si manquantes)
+    BOOL fileExists = (GetFileAttributesW(configFile) != INVALID_FILE_ATTRIBUTES);
+    BOOL foundSavedPath = FALSE;
+    BOOL foundEnableMemoryOffsets = FALSE;
+    BOOL foundEnableAutomaticChannelChange = FALSE;
+
+    wchar_t savedPathValue[MAX_PATH] = L"";
+
+    if (fileExists) {
+        FILE* f = _wfopen(configFile, L"r");
+        if (f) {
+            wchar_t line[1024];
+            while (fgetws(line, 1024, f)) {
+
+                wchar_t* p = line;
+                while (*p == L' ' || *p == L'\t') ++p;
+                wchar_t* end = p + wcslen(p);
+                while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
+                    *--end = L'\0';
+
+                if (*p == L'#' || *p == L';' || *p == L'\0') continue;
+
+                wchar_t* eq = wcschr(p, L'=');
+                if (!eq) continue;
+                *eq = L'\0';
+                wchar_t* key = p;
+                wchar_t* val = eq + 1;
+                // Trim val
+                while (*val == L' ' || *val == L'\t') ++val;
+             
+                wchar_t valLower[16];
+                int i = 0;
+                for (; i < 15 && val[i]; ++i) valLower[i] = (wchar_t)towlower(val[i]);
+                valLower[i] = 0;
+
+                if (wcsncmp(key, L"SavedPath", 9) == 0) {
+                    wcsncpy_s(savedPathValue, MAX_PATH, val, _TRUNCATE);
+                    foundSavedPath = TRUE;
+                }
+                else if (wcsncmp(key, L"EnableMemoryOffsets", 19) == 0) {
+                    enableMemoryOffsets = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
+                    foundEnableMemoryOffsets = TRUE;
+                }
+                else if (wcsncmp(key, L"EnableAutomaticChannelChange", 28) == 0) {
+                    enableAutomaticChannelChange = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
+                    foundEnableAutomaticChannelChange = TRUE;
+                }
+            }
+            fclose(f);
+        }
+    }
+
+    // If file doesn't exist or missing key => rewrite | Si le fichier n'existe pas ou qu'il manque une clé => réécriture
+    if (!fileExists || !foundSavedPath || !foundEnableMemoryOffsets || !foundEnableAutomaticChannelChange) {
+        FILE* f = _wfopen(configFile, L"w");
+        if (f) {
+            fwprintf(f, L"SavedPath=%s\n", foundSavedPath ? savedPathValue : L"");
+            fwprintf(f, L"EnableMemoryOffsets=%s\n", enableMemoryOffsets ? L"true" : L"false");
+            fwprintf(f, L"EnableAutomaticChannelChange=%s\n",
+                enableAutomaticChannelChange ? L"true" : L"false");
+            fclose(f);
+        }
+    }
 }
 
 // Plugin initialization function
@@ -1369,6 +1525,9 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
         snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePath);
     }
 
+    // Read configuration settings for offsets
+    readConfigurationSettings();
+
     // Debug log | Log pour débugger
     if (enableLogConfig) {
         char debugMsg[512];
@@ -1392,19 +1551,18 @@ uint8_t mumble_initPositionalData(const char* const* programNames, const uint64_
     return MUMBLE_PDEC_OK;
 }
 
-// Fill positional data for Mumble | Fonction pour remplir les données de position pour Mumble
 bool mumble_fetchPositionalData(float* avatarPos, float* avatarDir, float* avatarAxis, float* cameraPos,
     float* cameraDir, float* cameraAxis, const char** context, const char** identity) {
 
-
-    // Conversion des coordonnées de centimètres en mètres
-    avatarPos[0] = axe_x / 100.0f; // Conversion de X en mètres
-    avatarPos[1] = axe_y / 100.0f; // Conversion de Y en mètres
-    avatarPos[2] = axe_z / 100.0f; // Conversion de Z en mètres
+    // Avatar positions (Y = height) | Positions de l'avatar (Y = hauteur)
+    avatarPos[0] = axe_x / 100.0f;
+    avatarPos[1] = axe_y / 100.0f;
+    avatarPos[2] = axe_z / 100.0f;
 
     cameraPos[0] = avatarPos[0];
     cameraPos[1] = avatarPos[1];
     cameraPos[2] = avatarPos[2];
+
 
     avatarDir[0] = avatarAxisX;
     avatarDir[1] = avatarAxisY;
@@ -1414,46 +1572,35 @@ bool mumble_fetchPositionalData(float* avatarPos, float* avatarDir, float* avata
     cameraDir[1] = avatarDir[1];
     cameraDir[2] = avatarDir[2];
 
-    // Calcul dynamique de l'axe basé sur la direction du joueur
-    // Vecteur "haut" du monde (Z vers le haut dans votre jeu)
-    float world_up[3] = { 0.0f, 0.0f, 1.0f };
-    
-    // Calcul du vecteur "droite" : produit vectoriel entre direction et "haut du monde"
-    float right[3];
-    right[0] = avatarDir[1] * world_up[2] - avatarDir[2] * world_up[1];
-    right[1] = avatarDir[2] * world_up[0] - avatarDir[0] * world_up[2];
-    right[2] = avatarDir[0] * world_up[1] - avatarDir[1] * world_up[0];
-    
-    // Calcul du vrai vecteur "haut" du joueur : produit vectoriel entre "droite" et direction
-    avatarAxis[0] = right[1] * avatarDir[2] - right[2] * avatarDir[1];
-    avatarAxis[1] = right[2] * avatarDir[0] - right[0] * avatarDir[2];
-    avatarAxis[2] = right[0] * avatarDir[1] - right[1] * avatarDir[0];
-    
+    // Dynamic "up" axis calculation from yaw/pitch | Calcul dynamique de l'axe "up" depuis yaw/pitch
+    const float deg2rad = 3.14159265f / 180.0f;
+    float yawRad = currentModData.yaw * deg2rad;
+    float pitchRad = -currentModData.yawY * deg2rad; // Same convention as avatarDir.Y | même convention que avatarDir.Y
+
+    float sy = sinf(yawRad);
+    float cy = cosf(yawRad);
+    float sp = sinf(pitchRad);
+    float cp = cosf(pitchRad);
+
+    // Calculate up vector: up = up0*cp - forward_yaw*sp | Calcul du vecteur up : up = up0*cp - forward_yaw*sp
+    avatarAxis[0] = -sy * sp; // X component | Composante X
+    avatarAxis[1] = cp;       // Y component | Composante Y
+    avatarAxis[2] = -cy * sp; // Z component | Composante Z
+
+    // Safe vector normalization | Normalisation sécurisée du vecteur
+    float uLen = sqrtf(avatarAxis[0] * avatarAxis[0] + avatarAxis[1] * avatarAxis[1] + avatarAxis[2] * avatarAxis[2]);
+    if (uLen > 1e-6f) {
+        avatarAxis[0] /= uLen; avatarAxis[1] /= uLen; avatarAxis[2] /= uLen;
+    }
+
     cameraAxis[0] = avatarAxis[0];
     cameraAxis[1] = avatarAxis[1];
     cameraAxis[2] = avatarAxis[2];
 
-    /*
-    avatarAxis[0] = 0;
-    avatarAxis[1] = 0;
-    avatarAxis[2] = 1;
-
-    cameraAxis[0] = 0;
-    cameraAxis[1] = 0;
-    cameraAxis[2] = 1;
-    */
-    // On met à jour le contexte pour indiquer la source des données
-    if (useModFile) {
-        *context = "MOD_ACTIVE";
-    }
-    else {
-        *context = "MEMORY_OFFSETS";
-    }
-
+    *context = useModFile ? "MOD_ACTIVE" : (enableMemoryOffsets ? "MEMORY_OFFSETS" : "NO_DATA");
     checkPlayerZone();
-
+    manageChannelBasedOnCoordinates();
     *identity = "";
-
     return true;
 }
 
@@ -1495,7 +1642,7 @@ struct MumbleStringWrapper mumble_getName() {
 // Get plugin version | Obtenir la version du plugin
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 }; // Initialize version structure | Initialiser la structure de version
-    version.major = 2; // Major version number | Numéro de version majeure
+    version.major = 3; // Major version number | Numéro de version majeure
     version.minor = 0; // Minor version number | Numéro de version mineure
     version.patch = 2; // Patch version number | Numéro de version de correctif
 
@@ -1529,6 +1676,53 @@ struct MumbleStringWrapper mumble_getDescription() {
 // Return the plugin ID | Retourner l'ID du plugin
 static mumble_plugin_id_t mumble_getPluginID() {
     return ownID; // Return stored plugin identifier | Retourner l'identifiant de plugin stocké
+}
+
+// Called when the client has finished synchronizing with the server
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerSynchronized(mumble_connection_t connection) {
+    initializeChannelIDs();
+}
+
+// Called when connecting to a server
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerConnected(mumble_connection_t connection) {
+    channelManagementActive = FALSE;
+    hubChannelID = -1;
+    ingameChannelID = -1;
+    lastTargetChannel = -1;
+    lastValidChannel = -1;
+}
+
+// Called when disconnecting from a server
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerDisconnected(mumble_connection_t connection) {
+    channelManagementActive = FALSE;
+    lastValidChannel = -1;
+}
+
+// Called whenever any user enters a channel
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onChannelEntered(mumble_connection_t connection,
+    mumble_userid_t userID,
+    mumble_channelid_t previousChannelID,
+    mumble_channelid_t newChannelID) {
+    if (!enableAutomaticChannelChange) return; // Check if automatic change is enabled | Vérifier si le changement automatique est activé
+    if (!channelManagementActive) return;
+
+    // Check if it's the local user | Vérifier si c'est l'utilisateur local
+    mumble_userid_t localUserID;
+    if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    if (userID == localUserID) {
+        
+        if (!coordinatesValid) {
+            // If invalid coordinates and not in hub, send back to hub | Si coordonnées invalides et pas dans hub, renvoyer vers hub
+            if (newChannelID != hubChannelID && hubChannelID != -1) {
+                Sleep(50);
+                mumbleAPI.requestUserMove(ownID, connection, localUserID, hubChannelID, NULL);
+            }
+        }
+
+    }
 }
 
 // Plugin cleanup function | Fonction de nettoyage du plugin

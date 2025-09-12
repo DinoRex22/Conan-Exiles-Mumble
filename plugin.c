@@ -692,6 +692,7 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
     buffer[bytesRead] = '\0';
+
     if (enableLogModFile) {
         char logBuffer[300];
         snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: Contenu du fichier lu: %s", buffer);
@@ -701,34 +702,11 @@ static BOOL readModFileData(struct ModFileData* data) {
     char* endptr;
     data->valid = FALSE;
 
-    // New cleaning logic for parsing | Nouvelle logique de nettoyage pour le parsing
-    // Convert string to be readable by strtod regardless of locale | Convertit la chaîne pour qu'elle soit lisible par strtod, quelle que soit la locale
-    // 1. Replace decimal comma (,) with dot (.) | Remplace la virgule décimale (,) par un point (.)
-    // 2. Remove thousand separators (dots, spaces, etc.) | Supprime les séparateurs de milliers (points, espaces, etc.)
-    char cleanBuffer[256] = { 0 };
-    int cleanIndex = 0;
-    for (size_t i = 0; i < bytesRead && cleanIndex < sizeof(cleanBuffer) - 1; ++i) {
-        char c = buffer[i];
-
-
-        if (isalnum(c) || c == '-' || c == '=') {
-            cleanBuffer[cleanIndex++] = c;
-        }
-        else if (c == ',') { // Comma is ALWAYS the decimal separator | La virgule est TOUJOURS le séparateur décimal
-            cleanBuffer[cleanIndex++] = '.';
-        }
-        // Ignore all other characters (spaces, separation dots, etc.) | Ignore tous les autres caractères (espaces, points de séparation, etc.)
-    }
-    cleanBuffer[cleanIndex] = '\0';
-
-    if (enableLogModFile) {
-        char logBuffer[300];
-        snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: Contenu du fichier nettoyé pour le parsing: %s", cleanBuffer);
-        mumbleAPI.log(ownID, logBuffer);
-    }
+    // Universal format parsing - no cleaning needed | Parsing du format universel - pas de nettoyage nécessaire
+    // Format: SEQ=309 X=1955.529907 Y=354.150146 Z=300.107513 YAW=106.453 YAWY=348.125
 
     // Search and read SEQ | Rechercher et lire le SEQ
-    char* seq_ptr = strstr(cleanBuffer, "SEQ=");
+    char* seq_ptr = strstr(buffer, "SEQ=");
     if (seq_ptr) {
         seq_ptr += 4;
         data->seq = (int)strtod(seq_ptr, &endptr);
@@ -746,7 +724,7 @@ static BOOL readModFileData(struct ModFileData* data) {
     }
 
     // Search and read X | Rechercher et lire le X
-    char* x_ptr = strstr(cleanBuffer, "X=");
+    char* x_ptr = strstr(buffer, "X=");
     if (x_ptr) {
         x_ptr += 2;
         data->x = (float)strtod(x_ptr, &endptr);
@@ -764,7 +742,7 @@ static BOOL readModFileData(struct ModFileData* data) {
     }
 
     // Search and read Y | Rechercher et lire le Y
-    char* y_ptr = strstr(cleanBuffer, "Y=");
+    char* y_ptr = strstr(buffer, "Y=");
     if (y_ptr) {
         y_ptr += 2;
         data->y = (float)strtod(y_ptr, &endptr);
@@ -782,7 +760,7 @@ static BOOL readModFileData(struct ModFileData* data) {
     }
 
     // Search and read Z | Rechercher et lire le Z
-    char* z_ptr = strstr(cleanBuffer, "Z=");
+    char* z_ptr = strstr(buffer, "Z=");
     if (z_ptr) {
         z_ptr += 2;
         data->z = (float)strtod(z_ptr, &endptr);
@@ -800,7 +778,7 @@ static BOOL readModFileData(struct ModFileData* data) {
     }
 
     // Search and read YAW | Rechercher et lire le YAW
-    char* yaw_ptr = strstr(cleanBuffer, "YAW=");
+    char* yaw_ptr = strstr(buffer, "YAW=");
     if (yaw_ptr) {
         yaw_ptr += 4;
         data->yaw = (float)strtod(yaw_ptr, &endptr);
@@ -818,26 +796,26 @@ static BOOL readModFileData(struct ModFileData* data) {
     }
 
     // Search and read YAWY | Rechercher et lire le YAWY
-    char* yawy_ptr = strstr(cleanBuffer, "YAWY=");
+    char* yawy_ptr = strstr(buffer, "YAWY=");
     if (yawy_ptr) {
         yawy_ptr += 5;
         data->yawY = (float)strtod(yawy_ptr, &endptr);
         if (enableLogModFile) {
             char logBuffer[100];
-            snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: YAWY lu: %f", data->yawY);  // ✅ Log YAWY
+            snprintf(logBuffer, sizeof(logBuffer), u8"DEBUG: YAWY lu: %f", data->yawY);
             mumbleAPI.log(ownID, logBuffer);
         }
     }
     else {
         data->yawY = 0.0f;
         if (enableLogModFile) {
-            mumbleAPI.log(ownID, u8"INFO DE PARSING: 'YAWY=' non trouvé. Utilisation de la valeur par défaut 0.0.");  // ✅ Log YAWY
+            mumbleAPI.log(ownID, u8"INFO DE PARSING: 'YAWY=' non trouvé. Utilisation de la valeur par défaut 0.0.");
         }
     }
 
     data->valid = TRUE;
     if (enableLogModFile) {
-        mumbleAPI.log(ownID, u8"SUCCÈS: Toutes les données ont été lues.");
+        mumbleAPI.log(ownID, u8"SUCCÈS: Toutes les données ont été lues avec le format universel.");
     }
     return TRUE;
 }
@@ -1644,7 +1622,7 @@ mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 }; // Initialize version structure | Initialiser la structure de version
     version.major = 3; // Major version number | Numéro de version majeure
     version.minor = 0; // Minor version number | Numéro de version mineure
-    version.patch = 2; // Patch version number | Numéro de version de correctif
+    version.patch = 3; // Patch version number | Numéro de version de correctif
 
     return version;
 }

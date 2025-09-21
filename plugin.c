@@ -3484,7 +3484,7 @@ struct MumbleStringWrapper mumble_getName() {
 // Get plugin version | Obtenir la version du plugin
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 }; // Initialize version structure | Initialiser la structure de version
-    version.major = 3; // Major version number | Numéro de version majeure
+    version.major = 4; // Major version number | Numéro de version majeure
     version.minor = 0; // Minor version number | Numéro de version mineure
     version.patch = 3; // Patch version number | Numéro de version de correctif
 

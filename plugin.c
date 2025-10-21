@@ -11,180 +11,103 @@
 // and do not affect or modify the copyright 
 // or licensing terms of the original Mumble code.
 
-// Dino_Rex Public License v1.1
+/*
+Mozilla Public License Version 2.0 + Network Use Clause
 
-// Copyright (c) 2025 Dino_Rex
+Copyright(c) 2025 Dino_Rex
 
-// Permission is hereby granted, free of charge, to any person obtaining a copy 
-// of this software and the associated documentation files (the "Software"), 
-// to use the Software without restriction, including without limitation 
-// the rights to use, copy, modify, merge, publish, distribute, 
-// and/or sublicense the Software, 
-// and to permit persons to whom the Software is furnished to do so, 
-// subject to the following conditions:
+This software is licensed under the Mozilla Public License 2.0 (MPL - 2.0),
+available at : https://www.mozilla.org/MPL/2.0/
 
-// 1. Attribution: The Discord handle of the original source code creator 
-// (Dino_Rex) must be cited wherever the plugin is published 
-// as well as in the description of the compiled Mumble plugin.
-// 2. Share-Alike: Any public distribution or deployment of this software, 
-// or of any modified version of it (e.g., for use on a public Conan Exiles server), 
-// requires that the complete corresponding source code be made publicly available 
-// under the same terms as this license.
-// 3. Free of Charge: This software and all its modified versions must remain 
-// entirely free of charge. It is strictly forbidden to sell or monetize 
-// the Software, whether directly or indirectly.
-// 4. Donations: 
-//    a) Voluntary donations to the official creator of the Mumble plugin for Conan Exiles 
-//       (Dino_Rex) are allowed. 
-//    b) Donations made to other persons (who have modified, published, or redistributed the Software) 
-//       are also allowed, but a clear disclaimer must state that 
-//       the donation is intended solely for that person and NOT for the official creator 
-//       of the Mumble plugin for Conan Exiles (Dino_Rex).
-// 5. Non-Removal of License Terms: The clauses of this license are mandatory 
-//    and must remain included in any copy, distribution, or modified version of the Software. 
-//    Removal, alteration, or omission of these clauses is strictly prohibited.
-// 6. Disclaimer of Warranty: 
-//    The Software is provided "as is", without any warranty of any kind, express or implied, 
-//    including but not limited to warranties of merchantability, fitness for a particular purpose, 
-//    and non-infringement. 
-//    In no event shall the author (Dino_Rex) be liable for any claim, damages, 
-//    or other liability, whether in an action of contract, tort, or otherwise, 
-//    arising from, out of, or in connection with the Software or the use 
-//    or other dealings in the Software.
-// 7. Acceptance of Terms: By downloading, using, copying, modifying, merging, publishing, 
-//    or distributing this Software (in whole or in part), you acknowledge that you have read, 
-//    understood, and agreed to be bound by all the terms and conditions of this license.
+Additional Network Use Clause :
+If you modify this software and deploy or use it to provide a service accessible
+to others over a network(including via web, API, or remote access),
+you must make the complete corresponding source code of your modified version
+publicly available under this same license(MPL - 2.0 + Network Use Clause),
+including all changes and additions you made.
+
+All other terms and conditions of the Mozilla Public License 2.0 remain unchanged.
+*/
 
 #include "MumblePlugin_v_1_0_x.h"
-#include <winsock2.h>
+#include "plugin.h"
 #include <windows.h>
-#include <tlhelp32.h>
-#include <tchar.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
 #include <process.h>
-#include <ws2tcpip.h>
 #include <wchar.h>
 #include <commdlg.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <locale.h>
 #include <ctype.h>
-#include "SqlLite\sqlite3.h"
 
-#pragma comment(lib, "ws2_32.lib")
 
-void showPathSelectionDialogThread(void* arg);
-static int showConfigInterface();
-static void readConfigurationSettings();
-static const char* getKeyName(int vkCode);
-static void saveVoiceSettings();
-static void applyDistanceToAllPlayers();
-static void retrieveServerMaximumAudioDistance();
-LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+// ============================================================================
+// DÉFINITIONS DES VARIABLES GLOBALES | GLOBAL VARIABLE DEFINITIONS
+// ============================================================================
 
-// Server Configuration | Configuration du serveur
-#define SERVER_IP "192.168.0.1" // Server IP address | Adresse IP de votre serveur
-#define SERVER_PORT 1234 // Opened port | Port que vous avez ouvert
-#define REQUIRED_VERSION "VERSION: 2.0.0" // Required plugin version | Version requise pour le plugin
+// Plugin control variables | Variables de contrôle du plugin
+BOOL enableGetPlayerCoordinates = TRUE;
+BOOL TEMP = FALSE;
 
-// Log Control Variables | Variables pour contrôler l'activation des logs
-static BOOL enableLogCoordinates = FALSE; // Enable coordinate and position logs | Active les logs pour les coordonnées et positions
-static BOOL enableLogModFile = FALSE; // Enable mod file system logs (Pos.txt) | Active les logs pour le système de fichier mod (Pos.txt)
-static BOOL enableLogOffsets = FALSE; // Enable memory offset and read logs | Active les logs pour les offsets mémoire et lectures
-static BOOL enableLogConfig = FALSE; // Enable configuration and .cfg file logs | Active les logs pour la configuration et fichiers .cfg
-static BOOL enableLogServer = FALSE; // Enable server connection and zone logs | Active les logs pour les connexions serveur et zones
-static BOOL enableLogProcess = FALSE; // Enable process search and access logs | Active les logs pour la recherche et accès aux processus
-static BOOL enableLogGeneral = FALSE; // Enable general and debug logs | Active les logs généraux et de debug
+// Log control variables | Variables pour contrôler l'activation des logs
+BOOL enableLogCoordinates = FALSE;
+BOOL enableLogModFile = FALSE;
+BOOL enableLogConfig = FALSE;
+BOOL enableLogGeneral = FALSE;
 
-// Server Communication State | État de communication serveur
-static volatile BOOL versionReceived = FALSE; // Version received from server flag | Indicateur de version reçue du serveur
-static volatile BOOL zonesReceived = FALSE; // Zones received from server flag | Indicateur de zones reçues du serveur
+// Mumble API interface | Interface API Mumble
+struct MumbleAPI_v_1_0_x mumbleAPI;
+mumble_plugin_id_t ownID;
 
-// Function Control Variables | Variables pour contrôler l'activation des fonctions
-static BOOL enableSetMaximumAudioDistance = FALSE; // Enable audio distance setting function | Active la fonction de réglage de distance audio
-static BOOL enableCheckPlayerZone = FALSE; // Enable player zone checking function | Active la fonction de vérification de zone joueur
-static BOOL enableCheckVersionThread = FALSE; // Enable version checking thread function | Active la fonction de thread de vérification de version
-static BOOL enableStartVersionCheck = FALSE; // Enable version check start function | Active la fonction de démarrage de vérification de version
-static BOOL enableFindProcessId = FALSE; // Enable process ID finding function | Active la fonction de recherche d'ID de processus
-static BOOL enableFindBaseAddress = FALSE; // Enable base address finding function | Active la fonction de recherche d'adresse de base
-static BOOL enableReadMemoryValue = FALSE; // Enable memory reading function | Active la fonction de lecture mémoire
-static BOOL enableGetPlayerCoordinates = FALSE; // Enable player coordinates retrieval | Active la récupération des coordonnées du joueur
-static BOOL useServer = FALSE; // TRUE to use server, FALSE to disable | TRUE pour utiliser le serveur, FALSE pour désactiver
-static BOOL getPlayerCoordinates(void); // Forward declaration | Déclaration avant
+// Audio distance variables | Variables de distance audio
+double serverMaximumAudioDistance = 45.0;
+BOOL maxAudioDistanceRetrieved = FALSE;
+ULONGLONG lastMaxDistanceCheck = 0;
 
-// NOUVEAU: Variables pour la limite dynamique de distance audio
-static double serverMaximumAudioDistance = 30.0; // Valeur par défaut
-static BOOL maxAudioDistanceRetrieved = FALSE; // Indicateur si la valeur a été récupérée
-static ULONGLONG lastMaxDistanceCheck = 0; // Dernière vérification de la distance ma
+// Overlay border highlight variables | Variables de surbrillance de l'overlay
+BOOL overlayBorderHighlight = FALSE;
+mumble_userid_t overlayHighlightUserID = 0;
+char overlaySpeakerText[128] = "";
+CRITICAL_SECTION overlayTextLock;
 
-// Offset Control Variables | Variables pour contrôler l'activation des offsets
-static BOOL enableMemoryOffsets = FALSE; // Enable memory offset system | Active le système d'offsets mémoire
-static BOOL allowOffsetsFromConfig = TRUE; // Allow enabling offsets from config file | Permet d'activer les offsets depuis le fichier de config
+// Channel management variables | Variables de gestion des canaux
+mumble_channelid_t hubChannelID = -1;
+mumble_channelid_t rootChannelID = -1;
+mumble_channelid_t ingameChannelID = -1;
+mumble_channelid_t lastTargetChannel = -1;
+mumble_channelid_t lastValidChannel = -1;
+BOOL channelManagementActive = FALSE;
+BOOL enableAutomaticChannelChange = FALSE;
+ULONGLONG lastChannelCheck = 0;
 
-// Channel management variables | Variables de gestion des canaux  
-static mumble_channelid_t hubChannelID = -1; // Hub channel ID | ID du canal hub
-static mumble_channelid_t ingameChannelID = -1; // In-Game channel ID | ID du canal In-Game  
-static mumble_channelid_t lastTargetChannel = -1; // Last target channel | Dernier canal cible
-static mumble_channelid_t lastValidChannel = -1; // Last valid channel where user should be | Dernier canal valide où l'utilisateur devrait être
-static BOOL channelManagementActive = FALSE; // Channel management active flag | Indicateur de gestion des canaux active
-static BOOL enableAutomaticChannelChange = FALSE; // Enable automatic channel switching | Active le changement automatique de salon
-static ULONGLONG lastChannelCheck = 0; // Last channel check timestamp | Horodatage de la dernière vérification des canaux
+// Player position variables | Variables de position du joueur
+float axe_x = 0.0f;
+float axe_y = 0.0f;
+float axe_z = 0.0f;
+float avatarAxisX = 0.0f;
+float avatarAxisY = 0.0f;
+float avatarAxisZ = 0.0f;
 
-// YAW Control Variables | Variables pour le contrôle du YAW
-static BOOL enableYawOffsets = TRUE; // Enable YAW offset calculations | Active les calculs d'offsets YAW
-static BOOL useNativeTwoYawOffsets = FALSE; // Enable native two YAW offsets mode | Active le mode offsets natifs YAW séparés
-static BOOL enableBackupYawOffsets = FALSE; // Enable backup YAW offsets | Active les offsets YAW de secours
+// Adaptive mod system variables | Variables pour le système de Mod adaptatif
+time_t lastFileCheck = 0;
+time_t LastFileModification = 0;
+int lastSeq = -1;
+BOOL modDataValid = FALSE;
+char modFilePath[MAX_PATH] = "";
+BOOL coordinatesValid = FALSE;
+struct ModFileData currentModData = { 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, FALSE };
+ULONGLONG lastModDataTick = 0;
 
-// Mumble API Interface | Interface API Mumble
-struct MumbleAPI_v_1_0_x mumbleAPI; // Mumble API structure | Structure API Mumble
-mumble_plugin_id_t ownID; // Plugin unique identifier | Identifiant unique du plugin
-
-// Player Position Variables | Variables de position du joueur
-float axe_x = 0.0f; // Player X coordinate | Coordonnée X du joueur
-float axe_y = 0.0f; // Player Y coordinate | Coordonnée Y du joueur
-float axe_z = 0.0f; // Player Z coordinate | Coordonnée Z du joueur
-float avatarAxisX = 0.0f; // Avatar X direction | Direction X de l'avatar
-float avatarAxisY = 0.0f; // Avatar Y direction | Direction Y de l'avatar
-float avatarAxisZ = 0.0f; // Avatar Z direction | Direction Z de l'avatar
-
-// Mod Data Structure | Structure pour stocker les données du mod
-struct ModFileData {
-    int seq; // Sequence number | Numéro de séquence
-    float x, y, z, yaw, yawY; // Position and rotation data | Données de position et rotation ✅ CHANGÉ yawZ → yawY
-    BOOL valid; // Data validity flag | Indicateur de validité des données
-};
-
-// Adaptive Mod System Variables | Variables pour le système de Mod adaptatif
-static BOOL useModFile = FALSE; // Currently using mod file flag | Indicateur d'utilisation actuelle du fichier mod
-static time_t lastFileCheck = 0; // Last file check time (every 5s) | Dernière vérification du fichier (toutes les 5s)
-static time_t LastFileModification = 0; // Last file modification time | Dernière modification du fichier
-static int lastSeq = -1; // Last read SEQ to detect changes | Dernier SEQ lu pour détecter les changements
-static BOOL modDataValid = FALSE; // Mod data validity flag | Indicateur de validité des données mod
-static char modFilePath[MAX_PATH] = ""; // Mod file path | Chemin du fichier mod
-static BOOL coordinatesValid = FALSE; // Coordinates validity flag | Indicateur de validité des coordonnées
-static struct ModFileData currentModData = { 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, FALSE }; // Add a 0.0f for yawY | Ajout d'un 0.0f pour yawY
-static ULONGLONG lastModDataTick = 0; // High resolution timestamp of last valid mod read | Horodatage HAUTE RÉSOLUTION de la dernière lecture valide du mod
-
-// GUI Variables and Other Necessities | Variables d'interface graphique et autres nécessaires
-#define CONFIG_FILE L"plugin.cfg" // Configuration file name | Nom du fichier de configuration
-
-#ifndef _UNICODE
-#define _UNICODE
-#endif
-
-// Variables pour éviter les blocages de mute/demute
-static ULONGLONG lastMuteStateCheck = 0;
-static BOOL forceMuteStateRefresh = FALSE;
-
-// Variables globales pour l'interface
+// Global variables for the interface | Variables globales pour l'interface
 HWND hConfigDialog = NULL;
 HWND hWhisperKeyEdit, hNormalKeyEdit, hShoutKeyEdit, hConfigKeyEdit;
 HWND hWhisperButton, hNormalButton, hShoutButton, hConfigButton;
-HWND hEnableDistanceMutingCheck, hEnableMemoryOffsetsCheck, hEnableAutomaticChannelChangeCheck;
+HWND hEnableDistanceMutingCheck, hEnableAutomaticChannelChangeCheck;
 HWND hDistanceWhisperEdit, hDistanceNormalEdit, hDistanceShoutEdit;
 HWND hSavedPathEdit, hSavedPathButton;
 HWND hCategoryPatch, hCategoryAdvanced;
@@ -193,1238 +116,129 @@ HWND hStatusMessage = NULL;
 HWND hDistanceLimitMessage = NULL;
 HFONT hFont = NULL, hFontBold = NULL, hFontLarge = NULL, hFontEmoji = NULL;
 
-// NOUVEAU: Variables pour le toggle cyclique des modes de voix
-static int voiceToggleKey = 84; // T par défaut
-static BOOL enableVoiceToggle = FALSE; // Active le système de toggle
-static ULONGLONG lastVoiceTogglePress = 0; // Anti-spam pour le toggle
+// Interface message controls | Contrôles de messages de l'interface
+HWND hDistanceWhisperMessage = NULL;
+HWND hDistanceNormalMessage = NULL;
+HWND hDistanceShoutMessage = NULL;
+HWND hDistanceMutingMessage = NULL;
+HWND hChannelSwitchingMessage = NULL;
+HWND hPositionalAudioMessage = NULL;
+HWND hDistanceServerLimitWhisper = NULL;
+HWND hDistanceServerLimitNormal = NULL;
+HWND hDistanceServerLimitShout = NULL;
 
-static int currentCategory = 1;
-static int whisperKey = 17;
-static int normalKey = 86;
-static int shoutKey = 16;
-static int configUIKey = 121;
-static BOOL enableDistanceMuting = FALSE;
-static BOOL isCapturingKey = FALSE;
-static int captureKeyTarget = 0;
-static wchar_t savedPath[MAX_PATH] = L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved";
+// Interface state variables | Variables d'état de l'interface
+int currentCategory = 1;
+BOOL isCapturingKey = FALSE;
+int captureKeyTarget = 0;
+wchar_t savedPath[MAX_PATH] = L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved";
+BOOL isUpdatingInterface = FALSE;
+ULONGLONG lastInterfaceUpdate = 0;
 
-wchar_t* getConfigFolderPath();
-int isPatchAlreadySaved();
+// Interface text constants | Constantes de texte de l'interface
 const wchar_t* infoText1 = L"\U0001F4A1 Please provide the path to your Conan Exiles folder.";
 const wchar_t* infoText2 = L"\U0001F4C2 Example: C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles";
 const wchar_t* infoText3 = L"\u26A0\uFE0F The 'Saved' folder must exist inside 'ConanSandbox' for the plugin to work.";
 
-volatile BOOL isConnected = FALSE; // Connection indicator | Indicateur de connexion
-
-// Display message in chat | Afficher un message dans le chat
-static void displayInChat(const char* message) {
-    mumbleAPI.log(ownID, message);
-}
-
-// Variables to track used offsets | Variables pour suivre les offsets utilisés
-bool usedPrimaryX = true; // Primary X offset used flag | Indicateur d'utilisation de l'offset X principal
-bool usedPrimaryY = true; // Primary Y offset used flag | Indicateur d'utilisation de l'offset Y principal
-bool usedPrimaryZ = true; // Primary Z offset used flag | Indicateur d'utilisation de l'offset Z principal
-bool usedPrimaryYawX = true; // Primary YAW X offset used flag | Indicateur d'utilisation de l'offset YAW X principal
-bool usedPrimaryYawY = true; // Primary YAW Y offset used flag | Indicateur d'utilisation de l'offset YAW Y principal
-bool usedPrimaryYawZ = true; // Primary YAW Z offset used flag | Indicateur d'utilisation de l'offset YAW Z principal
-
-// Backup Offset Enable Flags | Indicateurs d'activation des offsets de secours
-static BOOL enableBackupOffsetX = FALSE; // Enable backup X offset | Active l'offset X de secours
-static BOOL enableBackupOffsetY = FALSE; // Enable backup Y offset | Active l'offset Y de secours
-static BOOL enableBackupOffsetZ = FALSE; // Enable backup Z offset | Active l'offset Z de secours
-
-// Ajout des nouvelles structures et variables pour le système de voice chat
-#pragma pack(push, 1)
-typedef struct {
-    float x, y, z;          // Coordonnées du joueur
-    uint8_t voiceMode;      // 0=whisper, 1=normal, 2=shout
-    float voiceDistance;    // Distance de voix actuelle
-    char playerName[64];    // Nom du joueur
-} VoiceData;
-#pragma pack(pop)
-
-// Variables globales pour le système de voix
-static VoiceData localVoiceData = { 0.0f, 0.0f, 0.0f, 1, 10.0f, "" };
-static VoiceData remotePlayersData[64]; // Stockage des données des autres joueurs
-static size_t remotePlayerCount = 0;
-static ULONGLONG lastVoiceDataSent = 0;
-static ULONGLONG lastKeyCheck = 0;
-
-// Variables de distance configurables par l'utilisateur
-static float distanceWhisper = 2.0f;   // Distance pour chuchoter
-static float distanceNormal = 10.0f;   // Distance pour parler normalement  
-static float distanceShout = 15.0f;    // Distance pour crier\
-
-typedef struct {
-    mumble_userid_t userID;
-    char playerName[64];
-    bool currentlyMuted;
-    ULONGLONG lastMuteCheck;
-} PlayerMuteState;
-
-// Variables globales pour le système de mute
-static PlayerMuteState playerMuteStates[64];
-static size_t playerMuteStateCount = 0;
-static ULONGLONG lastDistanceCheck = 0;
-
-// Global key monitoring variables | Variables de surveillance des touches globales
-static BOOL isConfigDialogOpen = FALSE; // Flag to prevent multiple dialogs | Flag pour empêcher plusieurs dialogues
-static DWORD lastKeyPressTime = 0; // Prevent key repeat | Empêcher la répétition de touches
-
-// Variables de surveillance des touches globales - NOUVELLE APPROCHE
-static BOOL keyMonitorThreadRunning = FALSE;
-static HANDLE keyMonitorThread = NULL;
-static BOOL lastKeyState = FALSE;
-
-// Variable pour forcer un refresh complet des états de mute
-static BOOL forceGlobalMuteRefresh = FALSE;
-static ULONGLONG lastGlobalRefresh = 0;
-
-// Thread de surveillance simple qui fonctionne toujours | Simple monitoring thread that always works
-static void keyMonitorThreadFunction(void* arg) {
-    keyMonitorThreadRunning = TRUE;
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "Key monitor thread: Started with ultra-reactive detection");
-    }
-
-    while (keyMonitorThreadRunning) {
-        // Vérifier l'état actuel de la touche
-        BOOL currentKeyState = (GetAsyncKeyState(configUIKey) & 0x8000) != 0;
-
-        // DÉTECTION DE FRONT MONTANT (touche pressée)
-        if (currentKeyState && !lastKeyState) {
-            // Touche vient d'être pressée !
-            if (!isConfigDialogOpen) {
-                isConfigDialogOpen = TRUE;
-
-                if (enableLogGeneral) {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "KEY INSTANT-DETECTED! %s (VK:%d) - opening interface immediately...",
-                        getKeyName(configUIKey), configUIKey);
-                    mumbleAPI.log(ownID, msg);
-                }
-
-                // Créer l'interface dans un thread séparé
-                _beginthread(showPathSelectionDialogThread, 0, NULL);
-            }
-        }
-
-        // Mettre à jour l'état précédent
-        lastKeyState = currentKeyState;
-
-        // Vérification très fréquente pour réactivité maximale
-        Sleep(20); // 20ms = détection quasi-instantanée
-    }
-
-    keyMonitorThreadRunning = FALSE;
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "Key monitor thread: Stopped");
-    }
-}
-
-// Nouvelle fonction pour obtenir la position de la souris et l'écran approprié
-static void getMousePositionAndScreen(POINT* mousePos, HMONITOR* targetMonitor, RECT* monitorRect) {
-    // Obtenir la position actuelle de la souris
-    GetCursorPos(mousePos);
-
-    // Trouver l'écran où se trouve la souris
-    *targetMonitor = MonitorFromPoint(*mousePos, MONITOR_DEFAULTTONEAREST);
-
-    // Obtenir les informations de l'écran
-    MONITORINFO monitorInfo;
-    monitorInfo.cbSize = sizeof(MONITORINFO);
-    GetMonitorInfo(*targetMonitor, &monitorInfo);
-    *monitorRect = monitorInfo.rcWork; // Zone de travail (sans la barre des tâches)
-}
-
-// Fonction pour forcer la fenêtre au premier plan (même en jeu plein écran)
-static void forceWindowToForeground(HWND hwnd) {
-    // Étape 1: Assurer que la fenêtre est visible
-    ShowWindow(hwnd, SW_SHOW);
-
-    // Étape 2: La placer au premier plan avec les flags les plus agressifs
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
-
-    // Étape 3: Forcer l'activation
-    DWORD currentThreadId = GetCurrentThreadId();
-    DWORD foregroundThreadId = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
-
-    if (currentThreadId != foregroundThreadId) {
-        // Attacher temporairement notre thread au thread de premier plan
-        AttachThreadInput(currentThreadId, foregroundThreadId, TRUE);
-        SetForegroundWindow(hwnd);
-        SetActiveWindow(hwnd);
-        AttachThreadInput(currentThreadId, foregroundThreadId, FALSE);
-    }
-    else {
-        SetForegroundWindow(hwnd);
-        SetActiveWindow(hwnd);
-    }
-
-    // Étape 4: S'assurer que la fenêtre reste visible
-    BringWindowToTop(hwnd);
-
-    // Étape 5: Flash pour attirer l'attention si nécessaire
-    FLASHWINFO flashInfo = { 0 };
-    flashInfo.cbSize = sizeof(FLASHWINFO);
-    flashInfo.hwnd = hwnd;
-    flashInfo.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
-    flashInfo.uCount = 3;
-    flashInfo.dwTimeout = 100;
-    FlashWindowEx(&flashInfo);
-}
-
-// Modifier showConfigInterface pour positionner à la souris
-static int showConfigInterface() {
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Function started");
-    }
-
-    // Load current values from config
-    readConfigurationSettings();
-    retrieveServerMaximumAudioDistance(TRUE);
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Configuration settings read");
-    }
-
-    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    if (FAILED(hr)) {
-        if (enableLogGeneral) {
-            char errorMsg[128];
-            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: COM initialization failed with HRESULT: 0x%08X", hr);
-            mumbleAPI.log(ownID, errorMsg);
-        }
-        MessageBoxW(NULL, L"Failed to initialize COM", L"Error", MB_OK | MB_ICONERROR);
-        isConfigDialogOpen = FALSE;
-        return -1;
-    }
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: COM initialized successfully");
-    }
-
-    const wchar_t CONFIG_CLASS_NAME[] = L"ModernConfigClass";
-    WNDCLASSW wc = { 0 };
-    wc.lpfnWndProc = ConfigDialogProc;
-    wc.hInstance = GetModuleHandleW(NULL);
-    wc.lpszClassName = CONFIG_CLASS_NAME;
-    wc.hbrBackground = CreateSolidBrush(RGB(248, 249, 250));
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-
-    // Unregister class if it exists
-    UnregisterClassW(CONFIG_CLASS_NAME, wc.hInstance);
-
-    ATOM classAtom = RegisterClassW(&wc);
-    if (classAtom == 0) {
-        DWORD error = GetLastError();
-        if (enableLogGeneral) {
-            char errorMsg[128];
-            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: RegisterClassW failed with error: %lu", error);
-            mumbleAPI.log(ownID, errorMsg);
-        }
-        CoUninitialize();
-        isConfigDialogOpen = FALSE;
-        return -1;
-    }
-
-    // NOUVEAU: Obtenir la position de la souris et l'écran approprié
-    POINT mousePos;
-    HMONITOR targetMonitor;
-    RECT monitorRect;
-    getMousePositionAndScreen(&mousePos, &targetMonitor, &monitorRect);
-
-    // Dimensions de la fenêtre
-    int windowWidth = 600;
-    int windowHeight = 740;
-
-    // Calculer la position pour centrer autour de la souris
-    int windowX = mousePos.x - (windowWidth / 2);
-    int windowY = mousePos.y - (windowHeight / 2);
-
-    // S'assurer que la fenêtre reste dans les limites de l'écran
-    if (windowX < monitorRect.left) {
-        windowX = monitorRect.left + 10;
-    }
-    else if (windowX + windowWidth > monitorRect.right) {
-        windowX = monitorRect.right - windowWidth - 10;
-    }
-
-    if (windowY < monitorRect.top) {
-        windowY = monitorRect.top + 10;
-    }
-    else if (windowY + windowHeight > monitorRect.bottom) {
-        windowY = monitorRect.bottom - windowHeight - 10;
-    }
-
-    if (enableLogGeneral) {
-        char posMsg[256];
-        snprintf(posMsg, sizeof(posMsg), "showConfigInterface: Positioning window at mouse location - Mouse: (%ld,%ld), Window: (%d,%d)",
-            mousePos.x, mousePos.y, windowX, windowY);
-        mumbleAPI.log(ownID, posMsg);
-    }
-
-    // Créer la fenêtre à la position calculée
-    hConfigDialog = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, // NOUVEAU: WS_EX_TOOLWINDOW aide à rester au premier plan
-        CONFIG_CLASS_NAME,
-        L"\U0001F3AE Plugin Settings",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        windowX, windowY, windowWidth, windowHeight, // NOUVEAU: Position calculée
-        NULL, NULL, wc.hInstance, NULL);
-
-    if (!hConfigDialog) {
-        DWORD error = GetLastError();
-        if (enableLogGeneral) {
-            char errorMsg[128];
-            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: CreateWindowExW failed with error: %lu", error);
-            mumbleAPI.log(ownID, errorMsg);
-        }
-        CoUninitialize();
-        isConfigDialogOpen = FALSE;
-        return -1;
-    }
-
-    if (enableLogGeneral) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "showConfigInterface: Window created successfully, hWnd = 0x%p", hConfigDialog);
-        mumbleAPI.log(ownID, msg);
-    }
-
-    // Définir la transparence
-    SetLayeredWindowAttributes(hConfigDialog, 0, 250, LWA_ALPHA);
-
-    // NOUVEAU: Forcer la fenêtre au premier plan de manière agressive
-    forceWindowToForeground(hConfigDialog);
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Window positioned at mouse and forced to foreground");
-    }
-
-    SetTimer(hConfigDialog, 1, 50, NULL);
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Timer set, entering message loop");
-    }
-
-    MSG msg = { 0 };
-    while (GetMessageW(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Message loop exited");
-    }
-
-    CoUninitialize();
-    isConfigDialogOpen = FALSE;
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Function completed successfully");
-    }
-
-    return 0;
-}
-
-// Démarrer le thread de surveillance | Start monitoring thread
-static void startKeyMonitorThread() {
-    if (!keyMonitorThreadRunning) {
-        keyMonitorThread = (HANDLE)_beginthread(keyMonitorThreadFunction, 0, NULL);
-
-        if (enableLogGeneral) {
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Key monitor thread started for key: %s (VK:%d)",
-                getKeyName(configUIKey), configUIKey);
-            mumbleAPI.log(ownID, msg);
-        }
-    }
-}
-
-// Nouvelle fonction simplifiée pour installer la surveillance | New simplified function to install monitoring
-static void installKeyMonitoring() {
-    if (enableLogGeneral) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "Installing key monitoring for: %s (VK:%d)",
-            getKeyName(configUIKey), configUIKey);
-        mumbleAPI.log(ownID, msg);
-    }
-
-    startKeyMonitorThread();
-}
-
-// Fonction pour afficher un message de statut dans l'interface | Function to display status message in interface
-static void showStatusMessage(const wchar_t* message, BOOL isError) {
-    if (hStatusMessage) {
-        SetWindowTextW(hStatusMessage, message);
-
-        // Changer la couleur selon le type de message | Change color based on message type
-        if (isError) {
-            // Rouge pour les erreurs | Red for errors
-            SendMessage(hStatusMessage, WM_CTLCOLORSTATIC, (WPARAM)GetDC(hStatusMessage), (LPARAM)hStatusMessage);
-        }
-        else {
-            // Vert pour les succès | Green for success
-            SendMessage(hStatusMessage, WM_CTLCOLORSTATIC, (WPARAM)GetDC(hStatusMessage), (LPARAM)hStatusMessage);
-        }
-
-        // Masquer le message après 5 secondes | Hide message after 5 seconds
-        SetTimer(hConfigDialog, 2, 5000, NULL);
-    }
-}
-
-// Fonction pour effacer le message de statut | Function to clear status message
-static void clearStatusMessage() {
-    if (hStatusMessage) {
-        SetWindowTextW(hStatusMessage, L"");
-    }
-}
-
-// Arrêter le thread de surveillance | Stop monitoring thread
-static void stopKeyMonitorThread() {
-    keyMonitorThreadRunning = FALSE;
-    if (keyMonitorThread != NULL) {
-        // Attendre que le thread se termine | Wait for thread to finish
-        Sleep(500); // Simple delay instead of WaitForSingleObject
-        keyMonitorThread = NULL;
-
-        if (enableLogGeneral) {
-            mumbleAPI.log(ownID, "Key monitor thread stopped");
-        }
-    }
-}
-
-// Nouvelle fonction pour désinstaller | New function to uninstall
-static void removeKeyMonitoring() {
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "Removing key monitoring");
-    }
-
-    stopKeyMonitorThread();
-}
-
-// Zone Structure | Structure de zone
-struct Zone {
-    float x1; // Zone X1 coordinate | Coordonnée X1 de la zone
-    float y1; // Zone Y1 coordinate | Coordonnée Y1 de la zone
-    float x2; // Zone X2 coordinate | Coordonnée X2 de la zone
-    float y2; // Zone Y2 coordinate | Coordonnée Y2 de la zone
-    double maxDistance; // Maximum audio distance in zone | Distance audio maximale dans la zone
-};
-
-struct Zone* zones = NULL; // Zones array pointer | Pointeur vers le tableau de zones
-size_t zoneCount = 0; // Number of zones | Nombre de zones
-
-// Parse zones from server response | Analyser les zones depuis la réponse du serveur
-static void parseZones(const char* response) {
-    // Search for beginning of "ZONES:" section in response | Cherche le début de la section "ZONES:" dans la réponse
-    const char* zonesData = strstr(response, "ZONES: ");
-    if (zonesData == NULL) {
-        displayInChat("Error: zone data not found in response | Erreur: données de zones non trouvées dans la réponse");
-        return;
-    }
-
-    // Advance pointer beyond "ZONES: " | Avancer le pointeur au-delà de "ZONES: "
-    zonesData += 7;
-
-    // Count number of zones (assuming they are separated by commas) | Compte le nombre de zones (assumant qu'elles sont séparées par des virgules)
-    zoneCount = 1;
-    const char* p = zonesData;
-    while (*p) {
-        if (*p == ';') { // Change to semicolon if zones are separated by semicolons | Changez en point-virgule si les zones sont séparées par des points-virgules
-            zoneCount++;
-        }
-        p++;
-    }
-
-    // Allocate memory for zones | Alloue la mémoire pour les zones
-    zones = (struct Zone*)malloc(zoneCount * sizeof(struct Zone));
-    if (zones == NULL) {
-        displayInChat("Memory allocation error for zones | Erreur d'allocation de mémoire pour les zones");
-        return;
-    }
-
-    // Fill information for each zone | Remplit les informations de chaque zone
-    p = zonesData;
-    for (size_t i = 0; i < zoneCount; i++) {
-        int result = sscanf_s(p, "%f,%f,%f,%f,%lf", &zones[i].x1, &zones[i].y1, &zones[i].x2, &zones[i].y2, &zones[i].maxDistance);
-        if (result != 5) {
-            char errorMessage[256];
-            snprintf(errorMessage, sizeof(errorMessage), "Analysis error for zone %zu | Erreur d'analyse pour la zone %zu", i + 1, i + 1);
-            displayInChat(errorMessage);
-            free(zones);
-            zones = NULL;
-            zoneCount = 0;
-            return;
-        }
-
-        // Move to next zone (using delimiter `;` or `,`) | Passe à la prochaine zone (en utilisant le délimiteur `;` ou `,`)
-        while (*p && *p != ';') {
-            p++;
-        }
-        if (*p == ';') {
-            p++;  // Skip semicolon | Ignore le point-virgule
-        }
-    }
-}
-
-// Modifier updateDistanceLimitMessage pour FORCER la récupération
-static void updateDistanceLimitMessage() {
-    if (!hDistanceLimitMessage) return;
-
-    retrieveServerMaximumAudioDistance(TRUE);
-
-    wchar_t limitMsg[256];
-    swprintf(limitMsg, 256, L"Maximum distance limit: %.1f meters (set by Mumble's Maximum Distance setting)",
-        serverMaximumAudioDistance);
-
-    SetWindowTextW(hDistanceLimitMessage, limitMsg);
-}
-
-// Modifier la fonction pour accepter un paramètre de force
-static void retrieveServerMaximumAudioDistance(BOOL forceUpdate) {
-    ULONGLONG currentTime = GetTickCount64();
-
-    // Vérifier seulement toutes les 5 secondes pour éviter le spam, SAUF si forceUpdate = TRUE
-    if (!forceUpdate && (currentTime - lastMaxDistanceCheck < 5000)) return;
-    lastMaxDistanceCheck = currentTime;
-
-    mumble_error_t result = mumbleAPI.getMumbleSetting_double(ownID,
-        MUMBLE_SK_AUDIO_OUTPUT_PA_MAXIMUM_DISTANCE, &serverMaximumAudioDistance);
-
-    if (result == MUMBLE_STATUS_OK) {
-        maxAudioDistanceRetrieved = TRUE;
-
-        if (enableLogGeneral) {
-            char logMsg[256];
-            snprintf(logMsg, sizeof(logMsg),
-                "Server Maximum Audio Distance retrieved: %.1f meters %s",
-                serverMaximumAudioDistance,
-                forceUpdate ? "(FORCED UPDATE)" : "");
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-    else {
-        // Utiliser une valeur par défaut sécurisée
-        serverMaximumAudioDistance = 30.0;
-        maxAudioDistanceRetrieved = FALSE;
-
-        if (enableLogGeneral) {
-            char logMsg[256];
-            snprintf(logMsg, sizeof(logMsg),
-                "Failed to retrieve server max distance (Error: %d), using default: %.1f meters",
-                result, serverMaximumAudioDistance);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-}
-
-// NOUVEAU: Fonction pour appliquer la limite maximale aux distances de voix
-static void applyMaximumDistanceLimits() {
-    if (!maxAudioDistanceRetrieved) {
-        retrieveServerMaximumAudioDistance(FALSE);
-    }
-
-    BOOL distanceChanged = FALSE;
-
-    // Vérifier et limiter les distances
-    if (distanceWhisper > serverMaximumAudioDistance) {
-        distanceWhisper = (float)serverMaximumAudioDistance;
-        distanceChanged = TRUE;
-    }
-
-    if (distanceNormal > serverMaximumAudioDistance) {
-        distanceNormal = (float)serverMaximumAudioDistance;
-        distanceChanged = TRUE;
-    }
-
-    if (distanceShout > serverMaximumAudioDistance) {
-        distanceShout = (float)serverMaximumAudioDistance;
-        distanceChanged = TRUE;
-    }
-
-    // NOUVEAU: Mettre à jour le message dans l'interface
-    updateDistanceLimitMessage();
-
-    if (distanceChanged) {
-        localVoiceData.voiceDistance = getVoiceDistanceForMode(localVoiceData.voiceMode);
-        saveVoiceSettings();
-        applyDistanceToAllPlayers();
-    }
-}
-
-// NOUVEAU: Fonction pour générer un message dynamique sur les limites de distance
-static void showDynamicDistanceLimitMessage() {
-    if (!maxAudioDistanceRetrieved) {
-        retrieveServerMaximumAudioDistance(FALSE);
-    }
-
-    char dynamicMsg[1024];
-    snprintf(dynamicMsg, sizeof(dynamicMsg),
-        "🔊 VOICE DISTANCE INFORMATION:\n"
-        "Server Maximum Audio Distance: %.1f meters\n"
-        "Current Settings:\n"
-        "  • Whisper: %.1f meters %s\n"
-        "  • Normal: %.1f meters %s\n"
-        "  • Shout: %.1f meters %s\n"
-        "Note: Distances are automatically limited by server settings. "
-        "Each server may have different maximum distances.",
-        serverMaximumAudioDistance,
-        distanceWhisper, (distanceWhisper == serverMaximumAudioDistance) ? "(LIMITED)" : "",
-        distanceNormal, (distanceNormal == serverMaximumAudioDistance) ? "(LIMITED)" : "",
-        distanceShout, (distanceShout == serverMaximumAudioDistance) ? "(LIMITED)" : "");
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, dynamicMsg);
-    }
-}
-
-// Set maximum audio distance | Définir la distance audio maximale
-static void setMaximumAudioDistance(double newMaxDistance) {
-    if (!enableSetMaximumAudioDistance) return;
-
-    mumble_error_t result = mumbleAPI.setMumbleSetting_double(ownID, MUMBLE_SK_AUDIO_OUTPUT_PA_MAXIMUM_DISTANCE, newMaxDistance);
-    if (result != MUMBLE_STATUS_OK) {}
-}
-
-// Set minimum audio distance | Définir la distance audio minimale
-static void setMinimumAudioDistance(double newMinDistance) {
-    if (!enableSetMaximumAudioDistance) return;
-
-    mumble_error_t result = mumbleAPI.setMumbleSetting_double(ownID, MUMBLE_SK_AUDIO_OUTPUT_PA_MINIMUM_DISTANCE, newMinDistance);
-    if (result != MUMBLE_STATUS_OK) {}
-}
-
-// Set audio bloom effect | Définir l'effet de bloom audio
-static void setAudioBloom(double bloomValue) {
-    if (!enableSetMaximumAudioDistance) return;
-
-    mumble_error_t result = mumbleAPI.setMumbleSetting_double(ownID, MUMBLE_SK_AUDIO_OUTPUT_PA_BLOOM, bloomValue);
-    if (result != MUMBLE_STATUS_OK) {}
-}
-
-// Set minimum audio volume | Définir le volume audio minimal
-static void setMinimumAudioVolume(double minVolume) {
-    if (!enableSetMaximumAudioDistance) return;
-
-    mumble_error_t result = mumbleAPI.setMumbleSetting_double(ownID, MUMBLE_SK_AUDIO_OUTPUT_PA_MINIMUM_VOLUME, minVolume);
-    if (result != MUMBLE_STATUS_OK) {}
-}
-
-
-
-// Fonction pour calculer la distance entre deux points
-static float calculateDistance(float x1, float y1, float z1, float x2, float y2, float z2) {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float dz = z2 - z1;
-    return sqrtf(dx * dx + dy * dy + dz * dz);
-}
-
-// Fonction pour obtenir la distance de voix selon le mode
-static float getVoiceDistanceForMode(uint8_t voiceMode) {
-    switch (voiceMode) {
-    case 0: return distanceWhisper; // Whisper
-    case 1: return distanceNormal;  // Normal
-    case 2: return distanceShout;   // Shout
-    default: return distanceNormal;
-    }
-}
-
-// Fonction pour obtenir le nom du joueur local
-static void getLocalPlayerName() {
-    mumble_connection_t connection;
-    if (mumbleAPI.getActiveServerConnection(ownID, &connection) == MUMBLE_STATUS_OK) {
-        mumble_userid_t localUserID;
-        if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) == MUMBLE_STATUS_OK) {
-            const char* userName = NULL;
-            if (mumbleAPI.getUserName(ownID, connection, localUserID, &userName) == MUMBLE_STATUS_OK) {
-                if (userName) {
-                    strncpy_s(localVoiceData.playerName, sizeof(localVoiceData.playerName), userName, _TRUNCATE);
-                    mumbleAPI.freeMemory(ownID, userName);
-                }
-            }
-        }
-    }
-}
-
-// NOUVELLE FONCTION: Applique immédiatement la nouvelle distance à tous les joueurs connectés
-static void applyDistanceToAllPlayers() {
-    if (!enableDistanceMuting) return;
-
-    ULONGLONG currentTime = GetTickCount64();
-    mumble_connection_t connection;
-
-    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
-        return;
-    }
-
-    // FORCER la réévaluation de TOUS les joueurs dans notre liste
-    for (size_t i = 0; i < playerMuteStateCount; i++) {
-        PlayerMuteState* muteState = &playerMuteStates[i];
-
-        // Trouver les données du joueur correspondant
-        VoiceData* playerData = NULL;
-        for (size_t j = 0; j < remotePlayerCount; j++) {
-            if (strcmp(remotePlayersData[j].playerName, muteState->playerName) == 0) {
-                playerData = &remotePlayersData[j];
-                break;
-            }
-        }
-
-        if (playerData) {
-            // Calculer la distance avec LES NOUVELLES coordonnées locales
-            float distance = calculateDistance(localVoiceData.x, localVoiceData.y, localVoiceData.z,
-                playerData->x, playerData->y, playerData->z);
-
-            // Utiliser LA NOUVELLE distance de voix du joueur local (qui vient de changer)
-            float maxHearingDistance = playerData->voiceDistance;
-            bool shouldMute = (distance > maxHearingDistance);
-
-            // APPLIQUER IMMÉDIATEMENT le mute/unmute
-            bool mumbleCurrentlyMuted = false;
-            if (mumbleAPI.isUserLocallyMuted(ownID, connection, muteState->userID, &mumbleCurrentlyMuted) == MUMBLE_STATUS_OK) {
-                if (mumbleCurrentlyMuted != shouldMute) {
-                    mumble_error_t result = mumbleAPI.requestLocalMute(ownID, connection, muteState->userID, shouldMute);
-
-                    if (result == MUMBLE_STATUS_OK) {
-                        muteState->currentlyMuted = shouldMute;
-                        muteState->lastMuteCheck = currentTime;
-
-                        if (enableLogGeneral) {
-                            char logMsg[256];
-                            snprintf(logMsg, sizeof(logMsg),
-                                "INSTANT-APPLY: Player %s: %s (Distance: %.1fm, Mode changed!)",
-                                playerData->playerName,
-                                shouldMute ? "MUTED" : "UNMUTED",
-                                distance);
-                            mumbleAPI.log(ownID, logMsg);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// NOUVEAU: Fonction pour cycliser entre les modes de voix
-static void cycleVoiceMode() {
-    if (!enableVoiceToggle) return;
-
-    ULONGLONG currentTime = GetTickCount64();
-    // Anti-spam: minimum 300ms entre les pressions
-    if (currentTime - lastVoiceTogglePress < 300) return;
-    lastVoiceTogglePress = currentTime;
-
-    uint8_t newMode;
-    switch (localVoiceData.voiceMode) {
-    case 1: newMode = 2; break; // Normal → Shout
-    case 2: newMode = 0; break; // Shout → Whisper  
-    case 0: newMode = 1; break; // Whisper → Normal
-    default: newMode = 1; break; // Par défaut Normal
-    }
-
-    // Appliquer le nouveau mode
-    localVoiceData.voiceMode = newMode;
-    localVoiceData.voiceDistance = getVoiceDistanceForMode(newMode);
-
-    // Forcer l'envoi immédiat
-    lastVoiceDataSent = 0;
-    applyDistanceToAllPlayers();
-
-    // Message de confirmation
-    char modeNames[][10] = { "Whisper", "Normal", "Shout" };
-    char chatMessage[128];
-    snprintf(chatMessage, sizeof(chatMessage),
-        "🔄 Voice mode switched to: %s - Distance: %.1f meters",
-        modeNames[newMode], localVoiceData.voiceDistance);
-    displayInChat(chatMessage);
-
-    if (enableLogGeneral) {
-        char logMsg[128];
-        snprintf(logMsg, sizeof(logMsg), "TOGGLE: Voice mode cycled to %s (Distance: %.1fm)",
-            modeNames[newMode], localVoiceData.voiceDistance);
-        mumbleAPI.log(ownID, logMsg);
-    }
-}
-
-// REMPLACER la fonction updateVoiceMode existante par celle-ci :
-static void updateVoiceMode() {
-    ULONGLONG currentTime = GetTickCount64();
-    if (currentTime - lastKeyCheck < 50) return;
-    lastKeyCheck = currentTime;
-
-    static uint8_t lastVoiceMode = 1;
-    uint8_t newVoiceMode = localVoiceData.voiceMode;
-
-    // NOUVEAU: Vérifier la touche de toggle AVANT les touches normales
-    static BOOL lastToggleKeyState = FALSE;
-    BOOL currentToggleKeyState = (GetAsyncKeyState(voiceToggleKey) & 0x8000) != 0;
-
-    if (enableVoiceToggle && currentToggleKeyState && !lastToggleKeyState) {
-        // Touche de toggle pressée - cycliser le mode
-        cycleVoiceMode();
-        lastToggleKeyState = currentToggleKeyState;
-        return; // Sortir pour éviter les conflits avec les touches normales
-    }
-    lastToggleKeyState = currentToggleKeyState;
-
-    // NOUVEAU: Vérifier les touches de mode de voix normales SEULEMENT si EnableVoiceToggle est FALSE
-    if (!enableVoiceToggle) {
-        if (GetAsyncKeyState(whisperKey) & 0x8000) {
-            newVoiceMode = 0; // Whisper
-        }
-        else if (GetAsyncKeyState(shoutKey) & 0x8000) {
-            newVoiceMode = 2; // Shout
-        }
-        else if (GetAsyncKeyState(normalKey) & 0x8000) {
-            newVoiceMode = 1; // Normal
-        }
-        else {
-            newVoiceMode = localVoiceData.voiceMode; // Garder le mode actuel
-        }
-    }
-    // Si enableVoiceToggle est TRUE, on ignore complètement les touches individuelles
-
-    // Le reste reste identique
-    if (newVoiceMode != lastVoiceMode) {
-        localVoiceData.voiceMode = newVoiceMode;
-        localVoiceData.voiceDistance = getVoiceDistanceForMode(newVoiceMode);
-        lastVoiceMode = newVoiceMode;
-
-        lastVoiceDataSent = 0;
-        applyDistanceToAllPlayers();
-
-        char modeNames[][10] = { "Whisper", "Normal", "Shout" };
-        char chatMessage[128];
-        snprintf(chatMessage, sizeof(chatMessage),
-            "Voice mode: %s - Distance: %.1f meters",
-            modeNames[newVoiceMode],
-            localVoiceData.voiceDistance);
-
-        displayInChat(chatMessage);
-
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "INSTANT Voice mode changed to: %s (Distance: %.1fm) - Applied immediately!",
-                modeNames[newVoiceMode], localVoiceData.voiceDistance);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-}
-
-// Fonction pour envoyer les données de voix aux autres joueurs - OPTIMISÉE 200MS
-static void sendVoiceDataToAll() {
-    ULONGLONG currentTime = GetTickCount64();
-    if (currentTime - lastVoiceDataSent < 40) return; // CHANGÉ: 1000ms → 40ms
-    lastVoiceDataSent = currentTime;
-
-    mumble_connection_t connection;
-    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
-        if (enableLogGeneral) {
-            mumbleAPI.log(ownID, "Failed to get active server connection");
-        }
-        return;
-    }
-
-    // Mettre à jour les coordonnées locales
-    localVoiceData.x = axe_x / 100.0f;
-    localVoiceData.y = axe_y / 100.0f;
-    localVoiceData.z = axe_z / 100.0f;
-
-    // Obtenir la liste de tous les utilisateurs
-    mumble_userid_t* allUsers = NULL;
-    size_t userCount = 0;
-
-    if (mumbleAPI.getAllUsers(ownID, connection, &allUsers, &userCount) == MUMBLE_STATUS_OK) {
-        if (allUsers && userCount > 0) {
-            // OPTIMISÉ: Réduire les logs pour éviter le spam
-            static ULONGLONG lastDebugLog = 0;
-            if (enableLogGeneral && (currentTime - lastDebugLog > 5000)) { // Log toutes les 5 secondes seulement
-                char debugMsg[256];
-                snprintf(debugMsg, sizeof(debugMsg),
-                    "HIGH-FREQ: Sending to %zu users every 200ms - Mode: %d, Distance: %.1f",
-                    userCount, localVoiceData.voiceMode, localVoiceData.voiceDistance);
-                mumbleAPI.log(ownID, debugMsg);
-                lastDebugLog = currentTime;
-            }
-
-            // Envoyer les données à tous les utilisateurs
-            mumble_error_t result = mumbleAPI.sendData(ownID, connection, allUsers, userCount,
-                (const uint8_t*)&localVoiceData, sizeof(VoiceData),
-                "ConanExiles_VoiceData");
-
-            // OPTIMISÉ: Logger les erreurs moins fréquemment
-            static ULONGLONG lastErrorLog = 0;
-            if (result != MUMBLE_STATUS_OK && (currentTime - lastErrorLog > 2000)) {
-                char errorMsg[128];
-                snprintf(errorMsg, sizeof(errorMsg), "HIGH-FREQ send failed: Error %d (Users: %zu)",
-                    result, userCount);
-                mumbleAPI.log(ownID, errorMsg);
-                lastErrorLog = currentTime;
-            }
-
-            mumbleAPI.freeMemory(ownID, allUsers);
-        }
-    }
-}
-
-// Fonction pour trouver ou créer l'état de mute d'un joueur
-static PlayerMuteState* findOrCreatePlayerMuteState(mumble_userid_t userID, const char* playerName) {
-    // Chercher un état existant
-    for (size_t i = 0; i < playerMuteStateCount; i++) {
-        if (playerMuteStates[i].userID == userID) {
-            return &playerMuteStates[i];
-        }
-    }
-
-    // Créer un nouvel état si on a de la place
-    if (playerMuteStateCount < 64) {
-        PlayerMuteState* newState = &playerMuteStates[playerMuteStateCount];
-        newState->userID = userID;
-        strncpy_s(newState->playerName, sizeof(newState->playerName), playerName, _TRUNCATE);
-        newState->currentlyMuted = false;
-        newState->lastMuteCheck = 0;
-        playerMuteStateCount++;
-        return newState;
-    }
-
-    return NULL;
-}
-
-// Force un refresh de tous les états toutes les 5 secondes
-static void checkForceGlobalRefresh() {
-    ULONGLONG currentTime = GetTickCount64();
-    if (currentTime - lastGlobalRefresh > 5000) { // 5 secondes
-        forceGlobalMuteRefresh = TRUE;
-        lastGlobalRefresh = currentTime;
-    }
-}
-
-// Fonction optimisée pour gérer les données de voix reçues - RÉACTIVITÉ MAXIMALE
-static void processReceivedVoiceData(const VoiceData* receivedData, mumble_userid_t senderID) {
-    if (!receivedData || !enableDistanceMuting) return;
-
-    ULONGLONG currentTime = GetTickCount64();
-
-    // Calculer la distance
-    float distance = calculateDistance(localVoiceData.x, localVoiceData.y, localVoiceData.z,
-        receivedData->x, receivedData->y, receivedData->z);
-
-    // CORRECTION: Utiliser la distance de voix du JOUEUR DISTANT (celui qui parle)
-    float maxHearingDistance = receivedData->voiceDistance;
-    bool shouldMute = (distance > maxHearingDistance);
-
-    // Trouver l'état de mute
-    PlayerMuteState* muteState = findOrCreatePlayerMuteState(senderID, receivedData->playerName);
-    if (!muteState) return;
-
-    // Vérifier si on doit forcer un refresh global
-    checkForceGlobalRefresh();
-
-    bool forceCheck = (muteState->lastMuteCheck == 0) || forceGlobalMuteRefresh;
-    bool timeCheck = (currentTime - muteState->lastMuteCheck > 40);
-
-    if (forceCheck || timeCheck) {
-        if (forceGlobalMuteRefresh) {
-            forceGlobalMuteRefresh = FALSE; // Reset après usage
-        }
-
-        mumble_connection_t connection;
-        if (mumbleAPI.getActiveServerConnection(ownID, &connection) == MUMBLE_STATUS_OK) {
-
-            // CORRECTION: TOUJOURS appliquer l'état calculé
-            mumble_error_t result = mumbleAPI.requestLocalMute(ownID, connection, senderID, shouldMute);
-
-            if (result == MUMBLE_STATUS_OK) {
-                muteState->currentlyMuted = shouldMute;
-                muteState->lastMuteCheck = currentTime;
-
-                if (forceCheck || enableLogGeneral) {
-                    static ULONGLONG lastMuteLog = 0;
-                    if (forceCheck || (currentTime - lastMuteLog > 2000)) {
-                        char logMsg[256];
-                        const char* modeNames[] = { "Whisper", "Normal", "Shout" };
-                        snprintf(logMsg, sizeof(logMsg),
-                            "FIXED: %s (%s, %.1fm): %s (Dist: %.1fm vs Max: %.1fm)",
-                            receivedData->playerName,
-                            modeNames[receivedData->voiceMode],
-                            receivedData->voiceDistance,
-                            shouldMute ? "MUTED" : "UNMUTED",
-                            distance,
-                            maxHearingDistance);
-                        mumbleAPI.log(ownID, logMsg);
-                        if (!forceCheck) lastMuteLog = currentTime;
-                    }
-                }
-            }
-        }
-    }
-
-    // Mettre à jour les données
-    bool found = false;
-    for (size_t i = 0; i < remotePlayerCount; i++) {
-        if (strcmp(remotePlayersData[i].playerName, receivedData->playerName) == 0) {
-            remotePlayersData[i] = *receivedData;
-            found = true;
-            break;
-        }
-    }
-
-    if (!found && remotePlayerCount < 64) {
-        remotePlayersData[remotePlayerCount] = *receivedData;
-        remotePlayerCount++;
-    }
-}
-
-// Fonction pour nettoyer les états de mute
-static void cleanupPlayerMuteStates() {
-    playerMuteStateCount = 0;
-    memset(playerMuteStates, 0, sizeof(playerMuteStates));
-    lastDistanceCheck = 0;
-}
-
-// Nettoyage complet à la déconnexion
-PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerDisconnected(mumble_connection_t connection) {
-    channelManagementActive = FALSE;
-    lastValidChannel = -1;
-
-    // NOUVEAU: Nettoyer complètement le système de voix
-    cleanupPlayerMuteStates();
-
-    // Réinitialiser toutes les données distantes
-    memset(remotePlayersData, 0, sizeof(remotePlayersData));
-    remotePlayerCount = 0;
-
-    // Réinitialiser les données locales
-    memset(localVoiceData.playerName, 0, sizeof(localVoiceData.playerName));
-    lastVoiceDataSent = 0;
-    lastDistanceCheck = 0;
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "Voice chat system reset on disconnection");
-    }
-}
-
-// Thread pour mettre à jour le système de voix - HAUTE FRÉQUENCE
-static void voiceSystemThread(void* arg) {
-    Sleep(2000); // Attendre 2 secondes puis démarrer
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "HIGH-FREQUENCY Voice system thread: Now active at 200ms intervals");
-    }
-
-    while (enableGetPlayerCoordinates) {
-        // Mettre à jour le nom du joueur si nécessaire
-        if (strlen(localVoiceData.playerName) == 0) {
-            getLocalPlayerName();
-        }
-
-        // Vérifier les changements de mode de voix TOUJOURS
-        updateVoiceMode();
-
-        // OPTIMISÉ: Debug moins fréquent
-        if (enableLogGeneral) {
-            static ULONGLONG lastDebugTime = 0;
-            ULONGLONG currentTime = GetTickCount64();
-            if (currentTime - lastDebugTime > 20000) { // Toutes les 20 secondes au lieu de 10
-                char debugMsg[256];
-                snprintf(debugMsg, sizeof(debugMsg),
-                    "HIGH-FREQ Voice system status - coordinatesValid: %s, playerCount: %zu, interval: 200ms",
-                    coordinatesValid ? "TRUE" : "FALSE",
-                    remotePlayerCount);
-                mumbleAPI.log(ownID, debugMsg);
-                lastDebugTime = currentTime;
-            }
-        }
-
-        // Envoyer les données de voix si les coordonnées sont valides ET que le muting est activé
-        if (coordinatesValid && enableDistanceMuting) {
-            sendVoiceDataToAll();
-        }
-
-        Sleep(25); // CHANGÉ: 100ms → 25ms pour plus de réactivité dans la détection des touches
-    }
-
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "HIGH-FREQUENCY Voice system thread: Stopped");
-    }
-}
-
-static void loadVoiceDistancesFromConfig() {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) return;
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    FILE* f = _wfopen(configFile, L"r");
-    if (f) {
-        wchar_t line[1024];
-        while (fgetws(line, 1024, f)) {
-            wchar_t* p = line;
-            while (*p == L' ' || *p == L'\t') ++p;
-            wchar_t* end = p + wcslen(p);
-            while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
-                *--end = L'\0';
-
-            if (*p == L'#' || *p == L';' || *p == L'\0') continue;
-
-            wchar_t* eq = wcschr(p, L'=');
-            if (!eq) continue;
-            *eq = L'\0';
-            wchar_t* key = p;
-            wchar_t* val = eq + 1;
-            while (*val == L' ' || *val == L'\t') ++val;
-
-            if (wcsncmp(key, L"DistanceWhisper", 15) == 0) {
-                distanceWhisper = (float)_wtof(val);
-            }
-            else if (wcsncmp(key, L"DistanceNormal", 14) == 0) {
-                distanceNormal = (float)_wtof(val);
-            }
-            else if (wcsncmp(key, L"DistanceShout", 13) == 0) {
-                distanceShout = (float)_wtof(val);
-            }
-        }
-        fclose(f);
-    }
-
-    // NOUVEAU: Appliquer les limites après le chargement
-    applyMaximumDistanceLimits();
-
-    if (enableLogConfig) {
-        char logMsg[256];
-        snprintf(logMsg, sizeof(logMsg),
-            "Voice distances loaded and limited - Whisper: %.1fm, Normal: %.1fm, Shout: %.1fm (Max: %.1fm)",
-            distanceWhisper, distanceNormal, distanceShout, serverMaximumAudioDistance);
-        mumbleAPI.log(ownID, logMsg);
-    }
-}
-
-const int numZones = sizeof(zones) / sizeof(zones[0]); // Number of zones calculation | Calcul du nombre de zones
-
-// Check player zone and adjust audio settings | Vérifier la zone du joueur et ajuster les paramètres audio
-static void checkPlayerZone() {
-    if (!enableCheckPlayerZone) return;
-
-    bool inZone = false;
-    for (size_t i = 0; i < zoneCount; ++i) {
-        if (axe_x / 100.0f >= zones[i].x1 && axe_x / 100.0f <= zones[i].x2 &&
-            axe_y / 100.0f >= zones[i].y1 && axe_y / 100.0f <= zones[i].y2) {
-            //setMinimumAudioDistance(2.0); // Set zone audio settings | Définir les paramètres audio de zone
-            //setMaximumAudioDistance(zones[i].maxDistance);
-            //setMinimumAudioVolume(0.0);
-            //setAudioBloom(0.75);
-            inZone = true;
-            break;
-        }
-    }
-
-    if (!inZone) {
-        //setMinimumAudioDistance(5.0); // Set default audio settings | Définir les paramètres audio par défaut
-        //setMaximumAudioDistance(25.0);
-        //setMinimumAudioVolume(0.0);
-        //setAudioBloom(0.2);
-    }
-}
-
-// Get configuration folder path | Obtenir le chemin du dossier de configuration
-wchar_t* getConfigFolderPath() {
-    static wchar_t configPath[MAX_PATH];
-    PWSTR documentsPath = NULL;
-
-    // Get Documents folder | Obtenir le dossier Documents
-    if (SUCCEEDED(SHGetKnownFolderPath(&FOLDERID_Documents, 0, NULL, &documentsPath))) {
-        // Create full path | Créer le chemin complet
-        swprintf(configPath, MAX_PATH, L"%s\\Conan Exiles Mumble plugin", documentsPath);
-
-        // Create folder if it doesn't exist | Créer le dossier s'il n'existe pas
-        CreateDirectoryW(configPath, NULL);
-
-        CoTaskMemFree(documentsPath);
-        return configPath;
-    }
-
-    return NULL;
-}
-
-// Automatic channel management based on coordinates validity | Gestion automatique des canaux selon la validité des coordonnées
-static void manageChannelBasedOnCoordinates() {
-    if (!enableAutomaticChannelChange) return; // Check if automatic change is enabled | Vérifier si le changement automatique est activé
-    if (!channelManagementActive) return;
-
-    ULONGLONG currentTick = GetTickCount64();
-    if (currentTick - lastChannelCheck < 500) return; // 0.5 seconds | 0.5 seconde
-    lastChannelCheck = currentTick;
-
-    mumble_connection_t connection;
-    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
-        return;
-    }
-
-    bool synchronized = false;
-    if (mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized) != MUMBLE_STATUS_OK || !synchronized) {
-        return;
-    }
-
-    mumble_userid_t localUserID;
-    if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) != MUMBLE_STATUS_OK) {
-        return;
-    }
-
-    mumble_channelid_t currentChannel;
-    if (mumbleAPI.getChannelOfUser(ownID, connection, localUserID, &currentChannel) != MUMBLE_STATUS_OK) {
-        return;
-    }
-
-    if (coordinatesValid) {
-        if (currentChannel != ingameChannelID && ingameChannelID != -1) {
-            mumbleAPI.requestUserMove(ownID, connection, localUserID, ingameChannelID, NULL);
-            lastValidChannel = ingameChannelID;
-        }
-    }
-    else {
-        if (currentChannel != hubChannelID && hubChannelID != -1) {
-            mumbleAPI.requestUserMove(ownID, connection, localUserID, hubChannelID, NULL);
-            lastValidChannel = hubChannelID;
-        }
-    }
-}
-
-// Initialize channel IDs | Initialiser les IDs des canaux
-static void initializeChannelIDs() {
-    mumble_connection_t connection;
-    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
-        return;
-    }
-
-    bool synchronized = false;
-    if (mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized) != MUMBLE_STATUS_OK || !synchronized) {
-        return;
-    }
-
-    // Find hub channel | Trouver le canal hub
-    if (mumbleAPI.findChannelByName(ownID, connection, "hub", &hubChannelID) != MUMBLE_STATUS_OK) {
-        hubChannelID = 0; // Default channel if hub doesn't exist | Canal par défaut si hub n'existe pas
-    }
-
-    // Find In-Game channel | Trouver le canal In-Game
-    if (mumbleAPI.findChannelByName(ownID, connection, "ingame", &ingameChannelID) != MUMBLE_STATUS_OK) {
-        ingameChannelID = -1; // Not found | Pas trouvé
-    }
-
-    if (hubChannelID != -1 && ingameChannelID != -1) {
-        channelManagementActive = TRUE;
-    }
-}
-
-// Conversion des codes de touches en noms
+// Voice toggle variables | Variables pour le toggle de voix
+int voiceToggleKey = 84;
+BOOL enableVoiceToggle = FALSE;
+ULONGLONG lastVoiceTogglePress = 0;
+
+// Key bindings | Raccourcis clavier
+int whisperKey = 17;
+int normalKey = 86;
+int shoutKey = 16;
+int configUIKey = 121;
+
+// Key monitoring variables | Variables de surveillance des touches globales
+BOOL isConfigDialogOpen = FALSE;
+DWORD lastKeyPressTime = 0;
+BOOL keyMonitorThreadRunning = FALSE;
+HANDLE keyMonitorThread = NULL;
+BOOL lastKeyState = FALSE;
+
+// Connection and hub state variables | Variables pour détecter l'état de connexion et hub
+BOOL isConnectedToServer = FALSE;
+BOOL hubDescriptionAvailable = FALSE;
+BOOL hubLimitsActive = FALSE;
+ULONGLONG lastConnectionCheck = 0;
+
+// Hub audio parameters | Paramètres audio du hub
+double hubAudioMinDistance = 2.0;
+double hubAudioMaxDistance = 50.0;
+double hubAudioMaxVolume = 85.0;
+double hubAudioBloom = 0.3;
+double hubAudioFilterIntensity = 0.5;
+BOOL hubForcePositionalAudio = FALSE;
+ULONGLONG lastHubDescriptionCheck = 0;
+char* lastHubDescriptionCache = NULL;
+
+// Hub distance limits | Limites de distance du hub
+double hubMinimumWhisper = 0.0;
+double hubMaximumWhisper = 5.0;
+double hubMinimumNormal = 5.0;
+double hubMaximumNormal = 15.0;
+double hubMinimumShout = 15.0;
+double hubMaximumShout = 50.0;
+BOOL hubForceDistanceBasedMuting = FALSE;
+BOOL hubForceAutomaticChannelSwitching = FALSE;
+
+// Voice system variables | Variables globales pour le système de voix
+CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
+CompletePositionalData remotePlayersData[64];
+size_t remotePlayerCount = 0;
+ULONGLONG lastVoiceDataSent = 0;
+ULONGLONG lastKeyCheck = 0;
+
+// Voice distance settings | Paramètres de distance vocale
+float distanceWhisper = 2.0f;
+float distanceNormal = 10.0f;
+float distanceShout = 15.0f;
+
+// Voice features | Fonctionnalités vocales
+BOOL enableDistanceMuting = FALSE;
+
+// Overlay variables | Variables globales pour l'overlay
+HWND hVoiceOverlay = NULL;
+HWND hVoiceText = NULL;
+BOOL enableVoiceOverlay = TRUE;
+HFONT hOverlayFont = NULL;
+BOOL overlayThreadRunning = FALSE;
+
+// Mute system variables | Variables globales pour le système de mute
+PlayerMuteState playerMuteStates[64];
+size_t playerMuteStateCount = 0;
+ULONGLONG lastDistanceCheck = 0;
+
+// Refresh variables | Variables pour forcer un refresh complet des états de mute
+BOOL forceGlobalMuteRefresh = FALSE;
+ULONGLONG lastGlobalRefresh = 0;
+
+// Automatic audio settings variables | Variables pour le système audio automatique
+BOOL enableAutoAudioSettings = TRUE;
+ULONGLONG lastAudioSettingsApply = 0;
+
+// Adaptive system variables | Variables globales pour le système adaptatif
+AdaptivePlayerData adaptivePlayerStates[64];
+size_t adaptivePlayerCount = 0;
+Vector3 localPlayerPosition = { 0.0f, 0.0f, 0.0f };
+
+// Audio volume states | États de volume audio
+AudioVolumeState audioVolumeStates[64];
+size_t audioVolumeCount = 0;
+
+// Low pass filter variables | Variables pour le filtre passe-bas
+LowPassFilterState lowPassStates[64];
+size_t lowPassStateCount = 0;
+
+// Air diffusion option | Option pour activer la diffusion d'air
+BOOL enableAirDiffusion = TRUE;
+
+// ============================================================================
+// MODULE 1 : UTILITAIRES DE BASE (appelés par TOUT le monde)
+// ============================================================================
+// Convert key codes to names | Conversion des codes de touches en noms
 static const char* getKeyName(int vkCode) {
     switch (vkCode) {
     case 17: return "Ctrl";
@@ -1479,34 +293,3132 @@ static const char* getKeyName(int vkCode) {
     }
 }
 
-// Traitement de la capture de touches
-static void processKeyCapture() {
-    if (!isCapturingKey) return;
+// Display chat message | Afficher un message de chat
+static void displayInChat(const char* message) {
+    mumbleAPI.log(ownID, message);
+}
 
-    for (int vk = 1; vk < 256; vk++) {
-        if (vk == 27) continue;
-        if (GetAsyncKeyState(vk) & 0x8000) {
-            switch (captureKeyTarget) {
-            case 1: whisperKey = vk; if (hWhisperKeyEdit) SetWindowTextA(hWhisperKeyEdit, getKeyName(vk)); break;
-            case 2: normalKey = vk; if (hNormalKeyEdit) SetWindowTextA(hNormalKeyEdit, getKeyName(vk)); break;
-            case 3: shoutKey = vk; if (hShoutKeyEdit) SetWindowTextA(hShoutKeyEdit, getKeyName(vk)); break;
-            case 4: configUIKey = vk; if (hConfigKeyEdit) SetWindowTextA(hConfigKeyEdit, getKeyName(vk)); break;
-            case 5: voiceToggleKey = vk; if (hVoiceToggleKeyEdit) SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(vk)); break;
+// Get configuration folder path | Obtenir le chemin du dossier de configuration
+wchar_t* getConfigFolderPath() {
+    static wchar_t configPath[MAX_PATH];
+    PWSTR documentsPath = NULL;
+
+    // Get Documents folder | Obtenir le dossier Documents
+    if (SUCCEEDED(SHGetKnownFolderPath(&FOLDERID_Documents, 0, NULL, &documentsPath))) {
+        // Create full path | Créer le chemin complet
+        swprintf(configPath, MAX_PATH, L"%s\\Conan Exiles Mumble plugin", documentsPath);
+
+        // Create folder if it doesn't exist | Créer le dossier s'il n'existe pas
+        CreateDirectoryW(configPath, NULL);
+
+        CoTaskMemFree(documentsPath);
+        return configPath;
+    }
+
+    return NULL;
+}
+
+// Check if patch is already saved | Vérifier si le patch est déjà sauvegardé
+int isPatchAlreadySaved() {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) {
+        return 0;
+    }
+
+    wchar_t configFile[MAX_PATH];
+    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+    FILE* file = _wfopen(configFile, L"r");
+    if (!file) {
+        return 0;
+    }
+    wchar_t line[512];
+    int found = 0;
+    while (fgetws(line, 512, file)) {
+        if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+            // Check if there's content after 'SavedPath=' | Vérifier qu'il y a du contenu après 'SavedPath='
+            wchar_t* value = line + 10;
+            while (*value == L' ' || *value == L'\t') value++;
+            if (*value != L'\0' && *value != L'\n' && *value != L'\r') {
+                found = 1;
+                break;
             }
-            isCapturingKey = FALSE;
-            captureKeyTarget = 0;
-            if (hWhisperButton) EnableWindow(hWhisperButton, TRUE);
-            if (hNormalButton) EnableWindow(hNormalButton, TRUE);
-            if (hShoutButton) EnableWindow(hShoutButton, TRUE);
-            if (hConfigButton) EnableWindow(hConfigButton, TRUE);
-            Sleep(200);
-            break;
+        }
+    }
+    fclose(file);
+    return found;
+}
+
+// Calculate distance between two points | Calculer la distance entre deux points
+static float calculateDistance(float x1, float y1, float z1, float x2, float y2, float z2) {
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float dz = z2 - z1;
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+// Calculate 3D distance | Calculer la distance 3D entre deux points
+static float calculateDistance3D(Vector3* a, Vector3* b) {
+    float dx = a->x - b->x;
+    float dy = a->y - b->y;
+    float dz = a->z - b->z;
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+// Count significant digits in value | Compter les chiffres significatifs dans une valeur
+static int countSignificantDigits(float value) {
+    if (value == 0.0f) return 1;
+
+    int integerPart = (int)value;
+    if (integerPart == 0) return 1;
+
+    int digitCount = 0;
+    while (integerPart > 0) {
+        digitCount++;
+        integerPart /= 10;
+    }
+    return digitCount;
+}
+
+// ============================================================================
+// MODULE 2 : CONFIGURATION ET FICHIERS
+// ============================================================================
+static void loadVoiceDistancesFromConfig() {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) return;
+
+    wchar_t configFile[MAX_PATH];
+    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+    FILE* f = _wfopen(configFile, L"r");
+    if (f) {
+        wchar_t line[1024];
+        while (fgetws(line, 1024, f)) {
+            wchar_t* p = line;
+            while (*p == L' ' || *p == L'\t') ++p;
+            wchar_t* end = p + wcslen(p);
+            while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
+                *--end = L'\0';
+
+            if (*p == L'#' || *p == L';' || *p == L'\0') continue;
+
+            wchar_t* eq = wcschr(p, L'=');
+            if (!eq) continue;
+            *eq = L'\0';
+            wchar_t* key = p;
+            wchar_t* val = eq + 1;
+            while (*val == L' ' || *val == L'\t') ++val;
+
+            if (wcsncmp(key, L"DistanceWhisper", 15) == 0) {
+                distanceWhisper = (float)_wtof(val);
+            }
+            else if (wcsncmp(key, L"DistanceNormal", 14) == 0) {
+                distanceNormal = (float)_wtof(val);
+            }
+            else if (wcsncmp(key, L"DistanceShout", 13) == 0) {
+                distanceShout = (float)_wtof(val);
+            }
+        }
+        fclose(f);
+    }
+
+    // CORRECTION: NE PAS appeler applyMaximumDistanceLimits() ici
+    // Cette fonction écrasait les valeurs chargées depuis le fichier
+
+    if (enableLogConfig) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg),
+            "Voice distances loaded from config - Whisper: %.1fm, Normal: %.1fm, Shout: %.1fm",
+            distanceWhisper, distanceNormal, distanceShout);
+        mumbleAPI.log(ownID, logMsg);
+    }
+}
+
+static void readConfigurationSettings() {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) return;
+
+    wchar_t configFile[MAX_PATH];
+    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+    BOOL fileExists = (GetFileAttributesW(configFile) != INVALID_FILE_ATTRIBUTES);
+    BOOL foundSavedPath = FALSE;
+    BOOL foundEnableAutomaticChannelChange = FALSE;
+    BOOL foundDistanceWhisper = FALSE;
+    BOOL foundDistanceNormal = FALSE;
+    BOOL foundDistanceShout = FALSE;
+
+    wchar_t savedPathValue[MAX_PATH] = L"";
+
+    if (fileExists) {
+        FILE* f = _wfopen(configFile, L"r");
+        if (f) {
+            wchar_t line[1024];
+            while (fgetws(line, 1024, f)) {
+                wchar_t* p = line;
+                while (*p == L' ' || *p == L'\t') ++p;
+                wchar_t* end = p + wcslen(p);
+                while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
+                    *--end = L'\0';
+
+                if (*p == L'#' || *p == L';' || *p == L'\0') continue;
+
+                wchar_t* eq = wcschr(p, L'=');
+                if (!eq) continue;
+                *eq = L'\0';
+                wchar_t* key = p;
+                wchar_t* val = eq + 1;
+                while (*val == L' ' || *val == L'\t') ++val;
+
+                wchar_t valLower[16] = { 0 };
+                int i = 0;
+                for (; i < 15 && val[i]; ++i) valLower[i] = (wchar_t)towlower(val[i]);
+                valLower[i] = 0;
+
+                if (wcsncmp(key, L"SavedPath", 9) == 0) {
+                    wcsncpy_s(savedPathValue, MAX_PATH, val, _TRUNCATE);
+                    foundSavedPath = TRUE;
+                }
+                else if (wcsncmp(key, L"EnableAutomaticChannelChange", 28) == 0) {
+                    enableAutomaticChannelChange = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
+                    foundEnableAutomaticChannelChange = TRUE;
+                }
+                else if (wcsncmp(key, L"WhisperKey", 10) == 0) {
+                    whisperKey = _wtoi(val);
+                }
+                else if (wcsncmp(key, L"NormalKey", 9) == 0) {
+                    normalKey = _wtoi(val);
+                }
+                else if (wcsncmp(key, L"ShoutKey", 8) == 0) {
+                    shoutKey = _wtoi(val);
+                }
+                else if (wcsncmp(key, L"ConfigUIKey", 11) == 0) {
+                    configUIKey = _wtoi(val);
+                }
+                else if (wcsncmp(key, L"EnableDistanceMuting", 20) == 0) {
+                    enableDistanceMuting = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
+                }
+                else if (wcsncmp(key, L"DistanceWhisper", 15) == 0) {
+                    distanceWhisper = (float)_wtof(val);
+                    foundDistanceWhisper = TRUE;
+                }
+                else if (wcsncmp(key, L"DistanceNormal", 14) == 0) {
+                    distanceNormal = (float)_wtof(val);
+                    foundDistanceNormal = TRUE;
+                }
+                else if (wcsncmp(key, L"DistanceShout", 13) == 0) {
+                    distanceShout = (float)_wtof(val);
+                    foundDistanceShout = TRUE;
+                }
+                else if (wcsncmp(key, L"VoiceToggleKey", 14) == 0) {
+                    voiceToggleKey = _wtoi(val);
+                }
+                else if (wcsncmp(key, L"EnableVoiceToggle", 17) == 0) {
+                    enableVoiceToggle = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
+                }
+            }
+            fclose(f);
+        }
+    }
+    // If file doesn't exist or critical settings are missing, create or update it | Si le fichier n'existe pas ou si des paramètres critiques manquent, le créer ou le mettre à jour
+    if (!fileExists || !foundSavedPath || !foundEnableAutomaticChannelChange) {
+        FILE* f = _wfopen(configFile, L"w");
+        if (f) {
+            fwprintf(f, L"SavedPath=%s\n", foundSavedPath ? savedPathValue : L"");
+            fwprintf(f, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
+            fwprintf(f, L"WhisperKey=%d\n", whisperKey);
+            fwprintf(f, L"NormalKey=%d\n", normalKey);
+            fwprintf(f, L"ShoutKey=%d\n", shoutKey);
+            fwprintf(f, L"ConfigUIKey=%d\n", configUIKey);
+            fwprintf(f, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
+            // CORRECTION: Écrire les distances SEULEMENT si elles ont été trouvées dans le fichier
+            // Sinon, utiliser les valeurs par défaut
+            fwprintf(f, L"DistanceWhisper=%.1f\n", foundDistanceWhisper ? distanceWhisper : 2.0f);
+            fwprintf(f, L"DistanceNormal=%.1f\n", foundDistanceNormal ? distanceNormal : 10.0f);
+            fwprintf(f, L"DistanceShout=%.1f\n", foundDistanceShout ? distanceShout : 15.0f);
+            fwprintf(f, L"VoiceToggleKey=%d\n", voiceToggleKey);
+            fwprintf(f, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
+            fclose(f);
+        }
+    }
+
+    if (enableLogConfig) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg),
+            "Configuration loaded - Whisper: %.1fm, Normal: %.1fm, Shout: %.1fm",
+            distanceWhisper, distanceNormal, distanceShout);
+        mumbleAPI.log(ownID, logMsg);
+    }
+}
+
+// Helper function to save specific parameter | Fonction pour sauvegarder un paramètre spécifique
+static void saveConfigurationChange(const char* key, const wchar_t* value) {
+    // Call complete function to save everything at once | Appeler la fonction complète pour tout sauvegarder d'un coup
+    saveVoiceSettings();
+
+    if (TEMP) {
+        char logMsg[128];
+        snprintf(logMsg, sizeof(logMsg), "SAVED CONFIG CHANGE: %s = %ls", key, value);
+        mumbleAPI.log(ownID, logMsg);
+    }
+}
+
+// Save voice settings and manage channel state | Sauvegarder les paramètres vocaux et gérer l'état des canaux
+static void saveVoiceSettings() {
+    // Get configuration folder path | Obtenir le chemin du dossier de configuration
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) return;
+
+    // Store current voice distance before modifications | Stocker la distance vocale actuelle avant modifications
+    float currentVoiceDistance = localVoiceData.voiceDistance;
+
+    // Build configuration file path | Construire le chemin du fichier de configuration
+    wchar_t configFile[MAX_PATH];
+    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+    // Arrays to store configuration lines | Tableaux pour stocker les lignes de configuration
+    wchar_t (*lines)[1024] = (wchar_t(*)[1024])calloc(100, sizeof(*lines));
+    if (!lines) {
+        // Allocation échouée, sortir proprement
+        return;
+    }
+    int lineCount = 0;
+    BOOL foundWhisper = FALSE, foundNormal = FALSE, foundShout = FALSE;
+    BOOL foundDistanceMuting = FALSE, foundChannelChange = FALSE;
+
+    // Read existing configuration file | Lire le fichier de configuration existant
+    FILE* f = NULL;
+    errno_t err = _wfopen_s(&f, configFile, L"r");
+    if (err == 0 && f) {
+        while (fgetws(lines[lineCount], 1024, f) && lineCount < 99) {
+            // Update whisper distance line | Mettre à jour la ligne de distance whisper
+            if (wcsncmp(lines[lineCount], L"DistanceWhisper=", 16) == 0) {
+                swprintf(lines[lineCount], 1024, L"DistanceWhisper=%.1f\n", distanceWhisper);
+                foundWhisper = TRUE;
+            }
+            // Update normal distance line | Mettre à jour la ligne de distance normale
+            else if (wcsncmp(lines[lineCount], L"DistanceNormal=", 15) == 0) {
+                swprintf(lines[lineCount], 1024, L"DistanceNormal=%.1f\n", distanceNormal);
+                foundNormal = TRUE;
+            }
+            // Update shout distance line | Mettre à jour la ligne de distance shout
+            else if (wcsncmp(lines[lineCount], L"DistanceShout=", 14) == 0) {
+                swprintf(lines[lineCount], 1024, L"DistanceShout=%.1f\n", distanceShout);
+                foundShout = TRUE;
+            }
+            // Update distance muting setting | Mettre à jour le paramètre de muting par distance
+            else if (wcsncmp(lines[lineCount], L"EnableDistanceMuting=", 21) == 0) {
+                swprintf(lines[lineCount], 1024, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
+                foundDistanceMuting = TRUE;
+            }
+            // Update automatic channel change setting | Mettre à jour le paramètre de changement automatique de canal
+            else if (wcsncmp(lines[lineCount], L"EnableAutomaticChannelChange=", 29) == 0) {
+                swprintf(lines[lineCount], 1024, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
+                foundChannelChange = TRUE;
+            }
+            lineCount++;
+        }
+        fclose(f);
+    }
+
+    // Add missing configuration lines | Ajouter les lignes de configuration manquantes
+    if (!foundWhisper && lineCount < 99) {
+        swprintf(lines[lineCount++], 1024, L"DistanceWhisper=%.1f\n", distanceWhisper);
+    }
+    if (!foundNormal && lineCount < 99) {
+        swprintf(lines[lineCount++], 1024, L"DistanceNormal=%.1f\n", distanceNormal);
+    }
+    if (!foundShout && lineCount < 99) {
+        swprintf(lines[lineCount++], 1024, L"DistanceShout=%.1f\n", distanceShout);
+    }
+    if (!foundDistanceMuting && lineCount < 99) {
+        swprintf(lines[lineCount++], 1024, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
+    }
+    if (!foundChannelChange && lineCount < 99) {
+        swprintf(lines[lineCount++], 1024, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
+    }
+
+    // Write updated configuration to file | Écrire la configuration mise à jour dans le fichier
+    f = NULL;
+    err = _wfopen_s(&f, configFile, L"w");
+    if (err == 0 && f) {
+        for (int i = 0; i < lineCount; i++) {
+            fwprintf(f, L"%s", lines[i]);
+        }
+        fclose(f);
+
+        // Preserve current voice mode based on closest distance match | Préserver le mode de voix actuel basé sur la correspondance de distance la plus proche
+        if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+            fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+            localVoiceData.voiceDistance = distanceWhisper;
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "Voice mode preserved: Whisper mode maintained after save");
+            }
+        }
+        else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+            localVoiceData.voiceDistance = distanceShout;
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "Voice mode preserved: Shout mode maintained after save");
+            }
+        }
+        else {
+            localVoiceData.voiceDistance = distanceNormal;
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "Voice mode preserved: Normal mode maintained after save");
+            }
+        }
+
+        // Debug logging | Log de debug
+        if (TEMP) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "Config saved - Voice mode preserved - Current distance: %.1f",
+                localVoiceData.voiceDistance);
+            mumbleAPI.log(ownID, logMsg);
         }
     }
 }
 
-// Fonction pour parcourir les dossiers (moderne)
-void browseSavedPath(HWND hwnd) {
+// Write full Saved path to config file | Écriture du chemin complet Saved dans le fichier de configuration
+static void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhisper, const wchar_t* distNormal, const wchar_t* distShout) {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) {
+        return;
+    }
+
+    wchar_t configFile[MAX_PATH];
+    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+    wchar_t savedPathFull[MAX_PATH];
+    swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
+
+    // Save current voice mode before modifying distances | Sauvegarder le mode de voix actuel AVANT de modifier les distances
+    float currentVoiceDistance = localVoiceData.voiceDistance;
+
+    // CORRECTION: Convertir les valeurs d'entrée SANS appliquer de limites
+    float whisperValue = (float)_wtof(distWhisper);
+    float normalValue = (float)_wtof(distNormal);
+    float shoutValue = (float)_wtof(distShout);
+
+    // CORRECTION: Mettre à jour les variables globales avec les valeurs ORIGINALES de l'utilisateur
+    distanceWhisper = whisperValue;
+    distanceNormal = normalValue;
+    distanceShout = shoutValue;
+
+    // Écrire directement dans le fichier
+    FILE* file = _wfopen(configFile, L"w");
+    if (!file) {
+        return;
+    }
+
+    fwprintf(file, L"SavedPath=%s\n", savedPathFull);
+    fwprintf(file, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
+    fwprintf(file, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
+    fwprintf(file, L"WhisperKey=%d\n", whisperKey);
+    fwprintf(file, L"NormalKey=%d\n", normalKey);
+    fwprintf(file, L"ShoutKey=%d\n", shoutKey);
+    fwprintf(file, L"ConfigUIKey=%d\n", configUIKey);
+    // CORRECTION: Écrire les valeurs EXACTES entrées par l'utilisateur
+    fwprintf(file, L"DistanceWhisper=%.1f\n", distanceWhisper);
+    fwprintf(file, L"DistanceNormal=%.1f\n", distanceNormal);
+    fwprintf(file, L"DistanceShout=%.1f\n", distanceShout);
+    fwprintf(file, L"VoiceToggleKey=%d\n", voiceToggleKey);
+    fwprintf(file, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
+    fclose(file);
+
+    if (enableLogConfig) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg),
+            "✅ USER VALUES SAVED: Whisper=%.1f, Normal=%.1f, Shout=%.1f",
+            distanceWhisper, distanceNormal, distanceShout);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    // Restore current voice mode instead of forcing Normal | Restaurer le mode de voix actuel au lieu de forcer Normal
+    if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+        fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+        localVoiceData.voiceDistance = distanceWhisper;
+    }
+    else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+        localVoiceData.voiceDistance = distanceShout;
+    }
+    else {
+        localVoiceData.voiceDistance = distanceNormal;
+    }
+
+    // Update mod file path | Mettre à jour le chemin du fichier mod
+    size_t converted = 0;
+    char modFilePathTemp[MAX_PATH] = "";
+    wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
+    snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
+
+    // Reinstall keyboard monitoring | Réinstaller la surveillance du clavier
+    removeKeyMonitoring();
+    installKeyMonitoring();
+}
+
+// ============================================================================
+// MODULE 3 : VALIDATION ET LIMITES
+// ============================================================================
+// Check if distance limits should be applied | Fonction pour déterminer si les limites de distance doivent être appliquées
+static BOOL shouldApplyDistanceLimits() {
+    if (!isConnectedToServer) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Distance limits DISABLED: Not connected to server");
+        }
+        return FALSE;
+    }
+
+    if (rootChannelID == -1) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Distance limits DISABLED: No hub channel found");
+        }
+        return FALSE;
+    }
+
+    if (!hubDescriptionAvailable) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Distance limits DISABLED: Hub description not available");
+        }
+        return FALSE;
+    }
+
+    if (!hubForceDistanceBasedMuting) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Distance limits DISABLED: ForceDistanceBasedMuting = FALSE - user has full control");
+        }
+        return FALSE;
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Distance limits ENABLED: ForceDistanceBasedMuting = TRUE");
+    }
+    return TRUE;
+}
+
+// Check connection status | Fonction pour vérifier l'état de la connexion
+static void checkConnectionStatus() {
+    ULONGLONG currentTime = GetTickCount64();
+    if (currentTime - lastConnectionCheck < 2000) return;
+    lastConnectionCheck = currentTime;
+
+    mumble_connection_t connection;
+    mumble_error_t result = mumbleAPI.getActiveServerConnection(ownID, &connection);
+
+    BOOL wasConnected = isConnectedToServer;
+    isConnectedToServer = (result == MUMBLE_STATUS_OK);
+
+    if (wasConnected != isConnectedToServer) {
+        if (isConnectedToServer) {
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "CONNECTION: Connected to server - distance limits may be applied");
+            }
+        }
+        else {
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "CONNECTION: Disconnected from server - distance limits DISABLED");
+            }
+            hubDescriptionAvailable = FALSE;
+            hubLimitsActive = FALSE;
+        }
+    }
+}
+
+// Determine if value should be validated | Déterminer si une valeur doit être validée
+static BOOL shouldValidateValue(float value, float minimum, float maximum, const char* modeName) {
+    int digitCount = countSignificantDigits(value);
+
+    int minDigits = countSignificantDigits(minimum);
+    int maxDigits = countSignificantDigits(maximum);
+    int requiredDigits = (maxDigits > minDigits) ? maxDigits : minDigits;
+
+    if (maximum >= 10.0f) {
+        requiredDigits = 2;
+    }
+
+    if (digitCount < requiredDigits) {
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg),
+                "FILTER: %s value %.1f has %d digits, need %d digits - IGNORING",
+                modeName, value, digitCount, requiredDigits);
+            mumbleAPI.log(ownID, logMsg);
+        }
+        return FALSE;
+    }
+
+    if (enableLogGeneral) {
+        char logMsg[128];
+        snprintf(logMsg, sizeof(logMsg),
+            "FILTER: %s value %.1f has %d digits, need %d digits - VALIDATING",
+            modeName, value, digitCount, requiredDigits);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    return TRUE;
+}
+
+// Validate and correct distance in real time | Fonction pour valider et corriger une distance en temps réel
+static float validateDistanceValue(float value, float minimum, float maximum, const char* modeName) {
+    if (!shouldApplyDistanceLimits()) {
+        return value;
+    }
+
+    if (value < minimum) {
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "%s distance auto-corrected: %.1f -> %.1f (below minimum)",
+                modeName, value, minimum);
+            mumbleAPI.log(ownID, logMsg);
+        }
+        return minimum;
+    }
+    else if (value > maximum) {
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "%s distance auto-corrected: %.1f -> %.1f (above maximum)",
+                modeName, value, maximum);
+            mumbleAPI.log(ownID, logMsg);
+        }
+        return maximum;
+    }
+    return value;
+}
+
+static void validatePlayerDistances() {
+    // Check if limits should be applied | Vérifier si les limites doivent être appliquées
+    if (!shouldApplyDistanceLimits()) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Distance validation SKIPPED: ForceDistanceBasedMuting = FALSE - user has full control of distances");
+        }
+        hubLimitsActive = FALSE;
+
+        // Ensure messages reflect user freedom | S'assurer que les messages reflètent la liberté de l'utilisateur
+        if (hConfigDialog && IsWindow(hConfigDialog)) {
+            updateDynamicInterface();
+        }
+
+        // Trigger immediate channel management check | Déclencher immédiatement une vérification de gestion des canaux
+        if (enableAutomaticChannelChange && channelManagementActive) {
+            lastChannelCheck = 0;
+            if (TEMP) {
+                mumbleAPI.log(ownID, "IMMEDIATE: Triggering channel management check");
+            }
+        }
+
+        return;
+    }
+
+    hubLimitsActive = TRUE;
+
+    BOOL distanceChanged = FALSE;
+    float originalWhisper = distanceWhisper;
+    float originalNormal = distanceNormal;
+    float originalShout = distanceShout;
+
+    // Validate whisper distance | Valider la distance whisper
+    if (distanceWhisper < hubMinimumWhisper) {
+        distanceWhisper = (float)hubMinimumWhisper;
+        distanceChanged = TRUE;
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Whisper distance corrected: %.1f -> %.1f (below minimum)",
+                originalWhisper, distanceWhisper);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+    else if (distanceWhisper > hubMaximumWhisper) {
+        distanceWhisper = (float)hubMaximumWhisper;
+        distanceChanged = TRUE;
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Whisper distance corrected: %.1f -> %.1f (above maximum)",
+                originalWhisper, distanceWhisper);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+
+    // Validate normal distance | Valider la distance normale
+    if (distanceNormal < hubMinimumNormal) {
+        distanceNormal = (float)hubMinimumNormal;
+        distanceChanged = TRUE;
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Normal distance corrected: %.1f -> %.1f (below minimum)",
+                originalNormal, distanceNormal);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+    else if (distanceNormal > hubMaximumNormal) {
+        distanceNormal = (float)hubMaximumNormal;
+        distanceChanged = TRUE;
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Normal distance corrected: %.1f -> %.1f (above maximum)",
+                originalNormal, distanceNormal);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+
+    // Validate shout distance | Valider la distance shout
+    if (distanceShout < hubMinimumShout) {
+        distanceShout = (float)hubMinimumShout;
+        distanceChanged = TRUE;
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Shout distance corrected: %.1f -> %.1f (below minimum)",
+                originalShout, distanceShout);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+    else if (distanceShout > hubMaximumShout) {
+        distanceShout = (float)hubMaximumShout;
+        distanceChanged = TRUE;
+        if (enableLogGeneral) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Shout distance corrected: %.1f -> %.1f (above maximum)",
+                originalShout, distanceShout);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+
+    // Save and apply changes if necessary | Sauvegarder et appliquer les changements si nécessaire
+    if (distanceChanged) {
+        saveVoiceSettings();
+        applyDistanceToAllPlayers();
+
+        if (enableLogGeneral) {
+            char summaryMsg[256];
+            snprintf(summaryMsg, sizeof(summaryMsg),
+                "Distance validation complete: Whisper=%.1f, Normal=%.1f, Shout=%.1f",
+                distanceWhisper, distanceNormal, distanceShout);
+            mumbleAPI.log(ownID, summaryMsg);
+        }
+    }
+    else {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "All player distances are valid - no corrections needed");
+        }
+    }
+}
+
+// Retrieve server maximum audio distance | Récupérer la distance audio maximale du serveur
+static void retrieveServerMaximumAudioDistance(BOOL forceUpdate) {
+    ULONGLONG currentTime = GetTickCount64();
+
+    if (!forceUpdate && (currentTime - lastMaxDistanceCheck < 5000)) return;
+    lastMaxDistanceCheck = currentTime;
+
+    mumble_error_t result = mumbleAPI.getMumbleSetting_double(ownID,
+        MUMBLE_SK_AUDIO_OUTPUT_PA_MAXIMUM_DISTANCE, &serverMaximumAudioDistance);
+
+    if (result == MUMBLE_STATUS_OK) {
+        maxAudioDistanceRetrieved = TRUE;
+
+        if (enableLogGeneral) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "Server Maximum Audio Distance retrieved: %.1f meters %s",
+                serverMaximumAudioDistance,
+                forceUpdate ? "(FORCED UPDATE)" : "");
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+    else {
+        serverMaximumAudioDistance = 30.0;
+        maxAudioDistanceRetrieved = FALSE;
+
+        if (enableLogGeneral) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "Failed to retrieve server max distance (Error: %d), using default: %.1f meters",
+                result, serverMaximumAudioDistance);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+}
+
+// Apply maximum distance limits | Appliquer les limites de distance maximale
+static void applyMaximumDistanceLimits() {
+    if (!maxAudioDistanceRetrieved) {
+        retrieveServerMaximumAudioDistance(FALSE);
+    }
+
+    BOOL distanceChanged = FALSE;
+
+    if (distanceWhisper > serverMaximumAudioDistance) {
+        distanceWhisper = (float)serverMaximumAudioDistance;
+        distanceChanged = TRUE;
+    }
+
+    if (distanceNormal > serverMaximumAudioDistance) {
+        distanceNormal = (float)serverMaximumAudioDistance;
+        distanceChanged = TRUE;
+    }
+
+    if (distanceShout > serverMaximumAudioDistance) {
+        distanceShout = (float)serverMaximumAudioDistance;
+        distanceChanged = TRUE;
+    }
+
+    if (distanceChanged) {
+        saveVoiceSettings();
+        applyDistanceToAllPlayers();
+    }
+}
+
+// ============================================================================
+// MODULE 4 : PARSING HUB
+// ============================================================================
+
+// Parse hub description to extract audio parameters | Parser la description du hub pour extraire les paramètres audio
+static void parseHubDescription(const char* description) {
+    if (!description || strlen(description) == 0) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Root description is empty, using default audio settings");
+        }
+        hubDescriptionAvailable = FALSE;
+        return;
+    }
+
+    if (enableLogGeneral) {
+        char logMsg[512];
+        snprintf(logMsg, sizeof(logMsg), "Parsing hub description: %s", description);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    // Create copy and replace HTML tags | Créer une copie et remplacer les balises HTML
+    size_t descLen = strlen(description);
+    char* descCopy = (char*)malloc(descLen * 2 + 1);
+    if (!descCopy) return;
+
+    // Replace HTML line breaks | Remplacer les retours à la ligne HTML
+    char* dest = descCopy;
+    const char* src = description;
+
+    while (*src) {
+        if (strncmp(src, "<br/>", 5) == 0) {
+            *dest++ = '\n';
+            src += 5;
+        }
+        else if (strncmp(src, "<BR/>", 5) == 0) {
+            *dest++ = '\n';
+            src += 5;
+        }
+        else if (strncmp(src, "<br>", 4) == 0) {
+            *dest++ = '\n';
+            src += 4;
+        }
+        else if (strncmp(src, "<BR>", 4) == 0) {
+            *dest++ = '\n';
+            src += 4;
+        }
+        else {
+            *dest++ = *src++;
+        }
+    }
+    *dest = '\0';
+
+    if (enableLogGeneral) {
+        char logMsg[512];
+        snprintf(logMsg, sizeof(logMsg), "After HTML processing: %s", descCopy);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    // Parse line by line | Parser ligne par ligne
+    char* context = NULL;
+    char* line = strtok_s(descCopy, "\n\r", &context);
+
+    while (line != NULL) {
+        // Clean whitespace | Nettoyer les espaces
+        while (*line == ' ' || *line == '\t') line++;
+
+        // Clean trailing whitespace | Nettoyer les espaces à la fin
+        char* end = line + strlen(line) - 1;
+        while (end > line && (*end == ' ' || *end == '\t')) {
+            *end = '\0';
+            end--;
+        }
+
+        if (enableLogGeneral) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg), "Processing line: '%s'", line);
+            mumbleAPI.log(ownID, logMsg);
+        }
+
+        // Audio parameters | Paramètres audio
+        if (strncmp(line, "ForcePositionelleAudio", 22) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+
+                if (strncmp(equal, "True", 4) == 0 || strncmp(equal, "true", 4) == 0 ||
+                    strncmp(equal, "TRUE", 4) == 0 || strncmp(equal, "1", 1) == 0) {
+                    hubForcePositionalAudio = TRUE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "Hub: ForcePositionalAudio = TRUE");
+                    }
+                }
+                else {
+                    hubForcePositionalAudio = FALSE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "Hub: ForcePositionalAudio = FALSE");
+                    }
+                }
+            }
+        }
+        else if (strncmp(line, "AudioMinDistance", 16) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubAudioMinDistance = (float)strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: AudioMinDistance = %.1f", hubAudioMinDistance);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else if (strncmp(line, "AudioMaxDistance", 16) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubAudioMaxDistance = (float)strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: AudioMaxDistance = %.1f", hubAudioMaxDistance);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else if (strncmp(line, "AudioMaxVolume", 14) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubAudioMaxVolume = (float)strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: AudioMaxVolume = %.1f", hubAudioMaxVolume);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else if (strncmp(line, "AudioBloom", 10) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubAudioBloom = (float)strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: AudioBloom = %.1f", hubAudioBloom);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+
+        // Parse AudioFilterIntensity | Parser AudioFilterIntensity
+        else if (strncmp(line, "AudioFilterIntensity", 20) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubAudioFilterIntensity = (float)strtod(equal, NULL);
+
+                // Limit between 0.0 and 1.0 | Limiter entre 0.0 et 1.0
+                if (hubAudioFilterIntensity < 0.0) hubAudioFilterIntensity = 0.0;
+                if (hubAudioFilterIntensity > 1.0) hubAudioFilterIntensity = 1.0;
+
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: AudioFilterIntensity = %.2f", hubAudioFilterIntensity);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+
+        // Distance-based muting parameters | Paramètres de muting basé sur la distance
+        else if (strncmp(line, "ForceDistanceBasedMuting", 24) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+
+                BOOL oldForceValue = hubForceDistanceBasedMuting;
+
+                if (strncmp(equal, "True", 4) == 0 || strncmp(equal, "true", 4) == 0 ||
+                    strncmp(equal, "TRUE", 4) == 0 || strncmp(equal, "1", 1) == 0) {
+                    hubForceDistanceBasedMuting = TRUE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "Hub: ForceDistanceBasedMuting = TRUE");
+                    }
+                }
+                else {
+                    hubForceDistanceBasedMuting = FALSE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "Hub: ForceDistanceBasedMuting = FALSE - User choice restored");
+                    }
+                }
+
+                // Detect state change | Détecter le changement d'état
+                if (oldForceValue != hubForceDistanceBasedMuting) {
+                    if (enableLogGeneral) {
+                        char changeMsg[128];
+                        snprintf(changeMsg, sizeof(changeMsg),
+                            "Hub: ForceDistanceBasedMuting changed from %s to %s",
+                            oldForceValue ? "TRUE" : "FALSE",
+                            hubForceDistanceBasedMuting ? "TRUE" : "FALSE");
+                        mumbleAPI.log(ownID, changeMsg);
+                    }
+                }
+            }
+        }
+
+        // Automatic channel switching parameters | Paramètres de changement automatique de canal
+        else if (strncmp(line, "ForceAutomaticChanelSwitching", 29) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+
+                BOOL oldForceValue = hubForceAutomaticChannelSwitching;
+
+                if (strncmp(equal, "True", 4) == 0 || strncmp(equal, "true", 4) == 0 ||
+                    strncmp(equal, "TRUE", 4) == 0 || strncmp(equal, "1", 1) == 0) {
+                    hubForceAutomaticChannelSwitching = TRUE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "Hub: ForceAutomaticChannelSwitching = TRUE");
+                    }
+                }
+                else {
+                    hubForceAutomaticChannelSwitching = FALSE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "Hub: ForceAutomaticChannelSwitching = FALSE - User choice restored");
+                    }
+                }
+
+                // Detect state change | Détecter le changement d'état
+                if (oldForceValue != hubForceAutomaticChannelSwitching) {
+                    if (enableLogGeneral) {
+                        char changeMsg[128];
+                        snprintf(changeMsg, sizeof(changeMsg),
+                            "Hub: ForceAutomaticChannelSwitching changed from %s to %s",
+                            oldForceValue ? "TRUE" : "FALSE",
+                            hubForceAutomaticChannelSwitching ? "TRUE" : "FALSE");
+                        mumbleAPI.log(ownID, changeMsg);
+                    }
+                }
+            }
+        }
+        // Whisper limits | Limites whisper
+        else if (strncmp(line, "MinimumWisper", 13) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubMinimumWhisper = strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: MinimumWhisper = %.1f", hubMinimumWhisper);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else if (strncmp(line, "MaximumWisper", 13) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubMaximumWhisper = strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: MaximumWhisper = %.1f", hubMaximumWhisper);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+
+        // Normal limits | Limites normales
+        else if (strncmp(line, "MinimumNormal", 13) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubMinimumNormal = strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: MinimumNormal = %.1f", hubMinimumNormal);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else if (strncmp(line, "MaximumNormal", 13) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubMaximumNormal = strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: MaximumNormal = %.1f", hubMaximumNormal);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+
+        // Shout limits | Limites shout
+        else if (strncmp(line, "MinimumShout", 12) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubMinimumShout = strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: MinimumShout = %.1f", hubMinimumShout);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else if (strncmp(line, "MaximumShout", 12) == 0) {
+            char* equal = strchr(line, '=');
+            if (equal) {
+                equal++;
+                while (*equal == ' ' || *equal == '\t') equal++;
+                hubMaximumShout = strtod(equal, NULL);
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "Hub: MaximumShout = %.1f", hubMaximumShout);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+
+        line = strtok_s(NULL, "\n\r", &context);
+    }
+
+    free(descCopy);
+
+    // Mark hub description as available | Marquer la description du hub comme disponible
+    hubDescriptionAvailable = TRUE;
+
+    // Apply new values | Appliquer les nouvelles valeurs
+    BOOL configChanged = FALSE;
+
+    if (hubForcePositionalAudio) {
+        if (!enableAutoAudioSettings) {
+            enableAutoAudioSettings = TRUE;
+            configChanged = TRUE;
+        }
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: ForcePositionalAudio = TRUE - Audio settings will be FORCED in Mumble");
+        }
+    }
+    else {
+        if (enableAutoAudioSettings) {
+            enableAutoAudioSettings = FALSE;
+            configChanged = TRUE;
+        }
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: ForcePositionalAudio = FALSE - User retains control of audio settings");
+        }
+    }
+
+    // Force distance-based muting if requested by hub | Forcer le muting basé sur la distance si demandé par le hub
+    if (hubForceDistanceBasedMuting) {
+        if (!enableDistanceMuting) {
+            enableDistanceMuting = TRUE;
+            configChanged = TRUE;
+        }
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: Distance-based muting FORCED by server");
+        }
+    }
+    else {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: Distance-based muting not forced - user choice allowed");
+        }
+    }
+
+    // Force automatic channel change if requested by hub | Forcer le changement automatique de canal si demandé par le hub
+    if (hubForceAutomaticChannelSwitching) {
+        if (!enableAutomaticChannelChange) {
+            enableAutomaticChannelChange = TRUE;
+            configChanged = TRUE;
+        }
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: Automatic channel switching FORCED by server");
+        }
+    }
+    else {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: Automatic channel switching not forced - user choice allowed");
+        }
+    }
+
+    // Save immediately if changes were made | Sauvegarder immédiatement si des changements ont été faits
+    if (configChanged) {
+        saveVoiceSettings();
+        if (TEMP) {
+            mumbleAPI.log(ownID, "IMMEDIATE SAVE: Configuration changes applied and saved to disk");
+        }
+    }
+
+    validatePlayerDistances();
+
+    if (enableLogGeneral) {
+        char logMsg[1024];
+        snprintf(logMsg, sizeof(logMsg),
+            "Hub settings applied:\n"
+            "  ForceAudio=%s, MinDist=%.1f, MaxDist=%.1f, MaxVol=%.1f, Bloom=%.1f, FilterIntensity=%.2f\n"
+            "  ForceMuting=%s\n"
+            "  Whisper: %.1f-%.1f, Normal: %.1f-%.1f, Shout: %.1f-%.1f",
+            enableAutoAudioSettings ? "TRUE" : "FALSE",
+            hubAudioMinDistance, hubAudioMaxDistance, hubAudioMaxVolume, hubAudioBloom, hubAudioFilterIntensity,
+            hubForceDistanceBasedMuting ? "TRUE" : "FALSE",
+            hubMinimumWhisper, hubMaximumWhisper,
+            hubMinimumNormal, hubMaximumNormal,
+            hubMinimumShout, hubMaximumShout);
+        mumbleAPI.log(ownID, logMsg);
+    }
+    if (hConfigDialog && IsWindow(hConfigDialog)) {
+        updateDynamicInterface();
+    }
+}
+
+// Read hub description | Lire la description du hub
+static void readHubDescription() {
+    // Robust read of root/hub channel description with synchronization retries
+    // Lecture robuste de la description du canal root/hub avec retries pour la synchronisation
+    if (rootChannelID == -1) {
+        // Try to discover channels if not set | Essayer de découvrir les canaux si non configurés
+        initializeChannelIDs();
+        if (rootChannelID == -1 && enableLogGeneral) {
+            mumbleAPI.log(ownID, "readHubDescription: rootChannelID not set - initializeChannelIDs attempted");
+        }
+    }
+
+    ULONGLONG currentTime = GetTickCount64();
+    // Check every 1 second (1000 ms) | Vérifier toutes les 1 seconde
+    if (currentTime - lastHubDescriptionCheck < 1000) return;
+    lastHubDescriptionCheck = currentTime;
+
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
+        hubDescriptionAvailable = FALSE;
+        if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: No active server connection");
+        return;
+    }
+
+    // Wait for connection synchronization with short retries | Attendre la synchronisation avec des retries courts
+    bool synchronized = false;
+    mumble_error_t syncRes = mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized);
+    int syncAttempts = 0;
+    const int syncMaxAttempts = 10;
+    while ((syncRes != MUMBLE_STATUS_OK || !synchronized) && syncAttempts < syncMaxAttempts) {
+        if (enableLogGeneral) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "readHubDescription: waiting for synchronization (attempt %d/%d)", syncAttempts + 1, syncMaxAttempts);
+            mumbleAPI.log(ownID, msg);
+        }
+        Sleep(200);
+        syncRes = mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized);
+        syncAttempts++;
+    }
+
+    if (!synchronized) {
+        hubDescriptionAvailable = FALSE;
+        if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: Connection not synchronized - will retry later");
+        return;
+    }
+
+    // If rootChannelID unknown, attempt to find it now (case variants) | Si rootChannelID inconnu, tenter de le trouver (variantes de casse)
+    if (rootChannelID == -1) {
+        const char* rootNames[] = { "Root", "root", "ROOT" };
+        for (size_t i = 0; i < sizeof(rootNames) / sizeof(rootNames[0]); ++i) {
+            mumble_error_t fres = mumbleAPI.findChannelByName(ownID, connection, rootNames[i], &rootChannelID);
+            if (fres == MUMBLE_STATUS_OK) {
+                if (enableLogGeneral) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "readHubDescription: Found Root channel as '%s' (id=%d)", rootNames[i], rootChannelID);
+                    mumbleAPI.log(ownID, msg);
+                }
+                break;
+            }
+        }
+    }
+
+    // Primary attempt to get description | Tentative primaire pour obtenir la description
+    const char* description = NULL;
+    mumble_error_t result = mumbleAPI.getChannelDescription(ownID, connection, rootChannelID, &description);
+
+    // If unsynchronized blob or transient error, retry a few times | Si erreur transitoire, refaire quelques retries
+    if (result != MUMBLE_STATUS_OK || description == NULL) {
+        if (enableLogGeneral) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "readHubDescription: initial getChannelDescription returned %d - entering retry loop", result);
+            mumbleAPI.log(ownID, msg);
+        }
+
+        const int maxTries = 8;
+        int tries = 0;
+        while (tries < maxTries) {
+            Sleep(250);
+
+            // Re-check sync quickly before retry | Re-vérifier la sync avant retry
+            bool isSync = false;
+            if (mumbleAPI.isConnectionSynchronized(ownID, connection, &isSync) != MUMBLE_STATUS_OK || !isSync) {
+                if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: connection lost synchronization during retries");
+                break;
+            }
+
+            // If rootChannelID was -1, try to discover again (case-insensitive) | Si rootChannelID non trouvé, tenter redécouverte
+            if (rootChannelID == -1) {
+                const char* rootNames[] = { "Root", "root", "ROOT" };
+                for (size_t i = 0; i < sizeof(rootNames) / sizeof(rootNames[0]); ++i) {
+                    mumble_error_t fres = mumbleAPI.findChannelByName(ownID, connection, rootNames[i], &rootChannelID);
+                    if (fres == MUMBLE_STATUS_OK) {
+                        if (enableLogGeneral) {
+                            char msg[128];
+                            snprintf(msg, sizeof(msg), "readHubDescription: discovered Root channel as '%s' (id=%d) during retries", rootNames[i], rootChannelID);
+                            mumbleAPI.log(ownID, msg);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Attempt to get description if we have an ID | Essayer d'obtenir la description si ID présent
+            if (rootChannelID != -1) {
+                if (description) { mumbleAPI.freeMemory(ownID, description); description = NULL; }
+                result = mumbleAPI.getChannelDescription(ownID, connection, rootChannelID, &description);
+                if (result == MUMBLE_STATUS_OK && description != NULL) break;
+            }
+
+            // Fallback: try hub channel if root still fails | Fallback : essayer le hub si root échoue
+            if (rootChannelID == -1 && hubChannelID != -1) {
+                if (description) { mumbleAPI.freeMemory(ownID, description); description = NULL; }
+                result = mumbleAPI.getChannelDescription(ownID, connection, hubChannelID, &description);
+                if (result == MUMBLE_STATUS_OK && description != NULL) {
+                    if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: used hub channel description as fallback");
+                    break;
+                }
+            }
+
+            tries++;
+        }
+    }
+
+    // If we succeeded, compare with cached copy and parse only on change
+    if (result == MUMBLE_STATUS_OK && description != NULL) {
+        // Create a local copy of returned description for safe storage
+        size_t len = strlen(description) + 1;
+        char* descCopy = (char*)malloc(len);
+        if (descCopy) {
+            memcpy(descCopy, description, len);
+        }
+
+        // Free the API-owned memory immediately
+        mumbleAPI.freeMemory(ownID, description);
+        description = NULL;
+
+        // Compare with cached description
+        if (descCopy) {
+            if (lastHubDescriptionCache == NULL || strcmp(lastHubDescriptionCache, descCopy) != 0) {
+                // Changed -> replace cache and apply
+                if (lastHubDescriptionCache) {
+                    free(lastHubDescriptionCache);
+                    lastHubDescriptionCache = NULL;
+                }
+                lastHubDescriptionCache = descCopy;
+
+                if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: description changed -> parsing and applying");
+                parseHubDescription(lastHubDescriptionCache);
+            }
+            else {
+                // Unchanged -> discard new copy
+                free(descCopy);
+                if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: description unchanged");
+            }
+            hubDescriptionAvailable = TRUE;
+        }
+        else {
+            // Allocation failed; still attempt parse directly (best-effort)
+            if (enableLogGeneral) mumbleAPI.log(ownID, "readHubDescription: malloc failed for desc copy - attempting parse on original (best-effort)");
+            // Note: original description was already freed, so skip parsing to avoid UB
+            hubDescriptionAvailable = FALSE;
+        }
+    }
+    else {
+        hubDescriptionAvailable = FALSE;
+        if (enableLogGeneral) {
+            char errorMsg[256];
+            snprintf(errorMsg, sizeof(errorMsg),
+                "readHubDescription: Failed to get hub description after retries, last error: %d - no distance limits",
+                result);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+    }
+}
+
+static void hubDescriptionMonitorThread(void* arg) {
+    Sleep(2000);
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Hub description monitor: PERMANENT monitoring active");
+    }
+
+    while (enableGetPlayerCoordinates) {
+        readHubDescription();
+        Sleep(2000);
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Hub description monitor: Stopped");
+    }
+}
+
+// ============================================================================
+// MODULE 5 : GESTION DES CANAUX
+// ============================================================================
+
+// Initialize channel IDs | Initialiser les IDs des canaux
+static void initializeChannelIDs() {
+    // Robust channel ID initialization with synchronization wait and name variants
+    // Initialisation robuste des IDs de canaux avec attente de synchronisation et variantes de nom
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
+        if (enableLogGeneral) mumbleAPI.log(ownID, "initializeChannelIDs: No active connection");
+        return;
+    }
+
+    // Wait briefly for synchronization | Attendre brièvement la synchronisation
+    bool synchronized = false;
+    mumble_error_t syncRes = mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized);
+    int attempts = 0;
+    const int maxAttempts = 8;
+    while ((syncRes != MUMBLE_STATUS_OK || !synchronized) && attempts < maxAttempts) {
+        if (enableLogGeneral) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "initializeChannelIDs: waiting for synchronization (attempt %d/%d)", attempts + 1, maxAttempts);
+            mumbleAPI.log(ownID, msg);
+        }
+        Sleep(200);
+        syncRes = mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized);
+        attempts++;
+    }
+
+    if (!synchronized) {
+        if (enableLogGeneral) mumbleAPI.log(ownID, "initializeChannelIDs: connection not synchronized - aborting channel lookups");
+        return;
+    }
+
+    // Try canonical names and case variants | Essayer les noms canoniques et variantes de casse
+    mumble_error_t res;
+
+    // Hub channel variants | Variantes pour le hub
+    const char* hubNames[] = { "hub", "Hub", "HUB" };
+    hubChannelID = -1;
+    for (size_t i = 0; i < sizeof(hubNames) / sizeof(hubNames[0]); ++i) {
+        res = mumbleAPI.findChannelByName(ownID, connection, hubNames[i], &hubChannelID);
+        if (res == MUMBLE_STATUS_OK) {
+            if (enableLogGeneral) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "initializeChannelIDs: Found hub channel as '%s' (id=%d)", hubNames[i], hubChannelID);
+                mumbleAPI.log(ownID, msg);
+            }
+            break;
+        }
+    }
+
+    // Root channel variants | Variantes pour Root
+    const char* rootNames[] = { "Root", "root", "ROOT" };
+    rootChannelID = -1;
+    for (size_t i = 0; i < sizeof(rootNames) / sizeof(rootNames[0]); ++i) {
+        res = mumbleAPI.findChannelByName(ownID, connection, rootNames[i], &rootChannelID);
+        if (res == MUMBLE_STATUS_OK) {
+            if (enableLogGeneral) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "initializeChannelIDs: Found Root channel as '%s' (id=%d)", rootNames[i], rootChannelID);
+                mumbleAPI.log(ownID, msg);
+            }
+            break;
+        }
+    }
+
+    // In-game channel variants | Variantes pour ingame
+    const char* ingameNames[] = { "ingame", "InGame", "Ingame" };
+    ingameChannelID = -1;
+    for (size_t i = 0; i < sizeof(ingameNames) / sizeof(ingameNames[0]); ++i) {
+        res = mumbleAPI.findChannelByName(ownID, connection, ingameNames[i], &ingameChannelID);
+        if (res == MUMBLE_STATUS_OK) {
+            if (enableLogGeneral) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "initializeChannelIDs: Found ingame channel as '%s' (id=%d)", ingameNames[i], ingameChannelID);
+                mumbleAPI.log(ownID, msg);
+            }
+            break;
+        }
+    }
+
+    // Activate channel management only if required channels found | Activer la gestion seulement si canaux trouvés
+    if (hubChannelID != -1 && ingameChannelID != -1) {
+        channelManagementActive = TRUE;
+        if (enableLogGeneral) mumbleAPI.log(ownID, "initializeChannelIDs: channelManagementActive = TRUE");
+    }
+    else {
+        channelManagementActive = FALSE;
+        if (enableLogGeneral) mumbleAPI.log(ownID, "initializeChannelIDs: channelManagementActive = FALSE (missing hub/ingame)");
+    }
+}
+
+// Automatic channel management based on coordinates validity | Gestion automatique des canaux selon la validité des coordonnées
+static void manageChannelBasedOnCoordinates() {
+    // Skip if automatic channel switching is disabled | Ignorer si le changement automatique de canal est désactivé
+    if (!enableAutomaticChannelChange) {
+        if (TEMP) {
+            mumbleAPI.log(ownID, "CHANNEL: manageChannelBasedOnCoordinates() SKIPPED - enableAutomaticChannelChange=FALSE");
+        }
+
+        // Deactivate channel management when disabled by user | Désactiver la gestion des canaux quand désactivé par l'utilisateur
+        if (channelManagementActive) {
+            channelManagementActive = FALSE;
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "CHANNEL MANAGEMENT: Deactivated due to user preference");
+            }
+        }
+        return;
+    }
+
+    // Skip if channel management system is not active | Ignorer si le système de gestion des canaux n'est pas actif
+    if (!channelManagementActive) {
+        if (TEMP) {
+            mumbleAPI.log(ownID, "CHANNEL: manageChannelBasedOnCoordinates() SKIPPED - channelManagementActive=FALSE");
+        }
+        return;
+    }
+
+    // Rate limiting to prevent excessive channel operations | Limitation de fréquence pour éviter les opérations excessives
+    ULONGLONG currentTick = GetTickCount64();
+    if (currentTick - lastChannelCheck < 500) return;
+    lastChannelCheck = currentTick;
+
+    // Verify active server connection | Vérifier la connexion serveur active
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    // Ensure client is synchronized with server | Assurer que le client est synchronisé avec le serveur
+    bool synchronized = false;
+    if (mumbleAPI.isConnectionSynchronized(ownID, connection, &synchronized) != MUMBLE_STATUS_OK || !synchronized) {
+        return;
+    }
+
+    // Get local user ID for channel operations | Obtenir l'ID utilisateur local pour les opérations de canal
+    mumble_userid_t localUserID;
+    if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    // Get current channel of the user | Obtenir le canal actuel de l'utilisateur
+    mumble_channelid_t currentChannel;
+    if (mumbleAPI.getChannelOfUser(ownID, connection, localUserID, &currentChannel) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    // Debug logging for channel management state | Log de debug pour l'état de gestion des canaux
+    if (TEMP) {
+        char stateMsg[256];
+        snprintf(stateMsg, sizeof(stateMsg),
+            "CHANNEL MANAGEMENT: Current=%d, Hub=%d, InGame=%d, CoordsValid=%s",
+            currentChannel, hubChannelID, ingameChannelID, coordinatesValid ? "TRUE" : "FALSE");
+        mumbleAPI.log(ownID, stateMsg);
+    }
+
+    // Move to appropriate channel based on coordinate validity | Déplacer vers le canal approprié selon la validité des coordonnées
+    if (coordinatesValid) {
+        if (currentChannel != ingameChannelID && ingameChannelID != -1) {
+            mumbleAPI.requestUserMove(ownID, connection, localUserID, ingameChannelID, NULL);
+            lastValidChannel = ingameChannelID;
+
+            if (TEMP) {
+                char moveMsg[128];
+                snprintf(moveMsg, sizeof(moveMsg), "CHANNEL: Moved to InGame (%d) - coordinates valid", ingameChannelID);
+                mumbleAPI.log(ownID, moveMsg);
+            }
+        }
+    }
+    else {
+        if (currentChannel != hubChannelID && hubChannelID != -1) {
+            mumbleAPI.requestUserMove(ownID, connection, localUserID, hubChannelID, NULL);
+            lastValidChannel = hubChannelID;
+
+            if (TEMP) {
+                char moveMsg[128];
+                snprintf(moveMsg, sizeof(moveMsg), "CHANNEL: Moved to Hub (%d) - coordinates invalid", hubChannelID);
+                mumbleAPI.log(ownID, moveMsg);
+            }
+        }
+    }
+}
+
+static void channelManagementThread(void* arg) {
+    Sleep(3000);
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Channel management thread: PERMANENT monitoring active");
+    }
+
+    while (enableGetPlayerCoordinates) {
+        checkConnectionStatus();
+
+        if (enableAutomaticChannelChange) {
+            manageChannelBasedOnCoordinates();
+        }
+
+        Sleep(500);
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Channel management thread: Stopped");
+    }
+}
+
+// ============================================================================
+// MODULE 6 : AUDIO - CALCULS DE VOLUME
+// ============================================================================
+
+// Calculate volume multiplier by distance | Calculer le multiplicateur de volume selon la distance
+static float calculateVolumeMultiplier(float distance, float maxDistance) {
+    if (distance >= maxDistance) {
+        return 0.01f;
+    }
+
+    if (distance <= 1.0f) {
+        return 1.0f;
+    }
+
+    float minDistance = 1.0f;
+    float normalizedDistance = (distance - minDistance) / (maxDistance - minDistance);
+    normalizedDistance = fmaxf(0.0f, fminf(normalizedDistance, 1.0f));
+
+    float volumeMultiplier = 1.0f / (1.0f + 2.0f * normalizedDistance * normalizedDistance);
+
+    if (volumeMultiplier < 0.01f) {
+        volumeMultiplier = 0.01f;
+    }
+
+    return volumeMultiplier;
+}
+
+static float calculateVolumeMultiplierWithHubSettings(float distance, float voiceDistance) {
+    if (hubDescriptionAvailable && hubForcePositionalAudio) {
+        float minDistance = (float)hubAudioMinDistance;
+        float bloom = (float)hubAudioBloom;
+        float maxVolumeFromServer = (float)hubAudioMaxVolume / 100.0f;
+
+        if (distance >= voiceDistance) {
+            return 0.0f;
+        }
+
+        if (distance <= minDistance) {
+            return maxVolumeFromServer;
+        }
+
+        float effectiveRange = voiceDistance - minDistance;
+        if (effectiveRange <= 0.0f) effectiveRange = 1.0f;
+
+        float rel = (distance - minDistance) / effectiveRange;
+        rel = fmaxf(0.0f, fminf(rel, 1.0f));
+
+        float physicalBase = 1.0f + (distance / minDistance) * 1.5f;
+        float physical = 1.0f / (physicalBase * physicalBase);
+
+        float perceptualExponent = 1.8f + (bloom * 1.5f);
+        float perceptual = powf(1.0f - rel, perceptualExponent);
+
+        float rawVolume = physical * (1.0f - bloom) + perceptual * bloom;
+        float volumeMultiplier = rawVolume * maxVolumeFromServer;
+
+        volumeMultiplier = volumeMultiplier * (0.8f + 0.2f * sqrtf(volumeMultiplier));
+
+        return fmaxf(0.0f, fminf(volumeMultiplier, maxVolumeFromServer));
+    }
+    else if (hubDescriptionAvailable && !hubForcePositionalAudio) {
+        float minDistance = 0.0f;
+        float maxDistance = voiceDistance;
+        float bloom = 1.3f;
+
+        float maxVolumeFromServer = (float)hubAudioMaxVolume / 100.0f;
+
+        if (distance >= maxDistance) {
+            return 0.0f;
+        }
+
+        if (distance <= 1.0f) {
+            float baseVolumeRange = maxVolumeFromServer - 0.60f;
+            if (baseVolumeRange < 0.0f) baseVolumeRange = 0.20f;
+
+            float baseVolume = 0.60f + (distance * baseVolumeRange);
+            return fminf(baseVolume, maxVolumeFromServer);
+        }
+
+        float rel = distance / maxDistance;
+        rel = fmaxf(0.0f, fminf(rel, 1.0f));
+
+        float exponent = 2.5f + (bloom * 1.2f);
+        float volumeMultiplier = powf(1.0f - rel, exponent);
+
+        volumeMultiplier *= maxVolumeFromServer;
+        volumeMultiplier = volumeMultiplier * (0.85f + 0.15f * sqrtf(volumeMultiplier));
+
+        return fmaxf(0.0f, fminf(volumeMultiplier, maxVolumeFromServer));
+    }
+    else {
+        return (float)calculateVolumeMultiplier(distance, voiceDistance);
+    }
+}
+
+
+// Apply smoothing to avoid abrupt volume changes | Appliquer un lissage pour éviter les sauts brusques de volume
+static float smoothVolume(float current, float target) {
+    float difference = fabsf(target - current);
+
+    if (difference < 0.01f) {
+        return current * 0.99f + target * 0.01f;
+    }
+    else if (difference < 0.03f) {
+        return current * 0.97f + target * 0.03f;
+    }
+    else if (difference < 0.08f) {
+        return current * 0.93f + target * 0.07f;
+    }
+    else if (difference < 0.15f) {
+        return current * 0.85f + target * 0.15f;
+    }
+    else {
+        return current * 0.75f + target * 0.25f;
+    }
+}
+
+// ============================================================================
+// MODULE 7 : AUDIO - FILTRES
+// ============================================================================
+
+// Find or create low pass filter state | Fonction pour trouver ou créer l'état du filtre d'un utilisateur
+static LowPassFilterState* findOrCreateLowPassState(mumble_userid_t userID) {
+    for (size_t i = 0; i < lowPassStateCount; i++) {
+        if (lowPassStates[i].userID == userID) {
+            lowPassStates[i].lastUpdate = GetTickCount64();
+            return &lowPassStates[i];
+        }
+    }
+
+    if (lowPassStateCount < 64) {
+        LowPassFilterState* newState = &lowPassStates[lowPassStateCount];
+        newState->userID = userID;
+        newState->lastSampleLeft = 0.0f;
+        newState->lastSampleRight = 0.0f;
+        newState->lastCutoff = -1.0f;
+        newState->lastAlpha = 0.0f;
+        newState->lastUpdate = GetTickCount64();
+        newState->isInitialized = FALSE;
+        lowPassStateCount++;
+        return newState;
+    }
+
+    return NULL;
+}
+
+// Apply low pass filter | Fonction pour appliquer le filtre passe-bas
+static void applyLowPassFilter(float* samples, uint32_t sampleCount, uint16_t channelCount,
+    float cutoffHz, uint32_t sampleRate, LowPassFilterState* filterState) {
+    if (!samples || !filterState || sampleCount == 0 || sampleRate == 0) return;
+
+    // Recalculate alpha only if cutoff changed | Recalculer alpha seulement si cutoff a changé
+    if (cutoffHz != filterState->lastCutoff) {
+        const float dt = 1.0f / (float)sampleRate;
+        const float RC = 1.0f / (cutoffHz * 6.28318530718f);
+        filterState->lastAlpha = dt / (RC + dt);
+        filterState->lastCutoff = cutoffHz;
+    }
+
+    const float alpha = filterState->lastAlpha;
+
+    if (channelCount == 1) {
+        // Mono processing | Traitement mono
+        for (uint32_t i = 0; i < sampleCount; i++) {
+            if (!filterState->isInitialized) {
+                filterState->lastSampleLeft = samples[i];
+                filterState->isInitialized = TRUE;
+            }
+
+            filterState->lastSampleLeft += alpha * (samples[i] - filterState->lastSampleLeft);
+            float secondPass = filterState->lastSampleLeft;
+            filterState->lastSampleLeft += alpha * 0.7f * (secondPass - filterState->lastSampleLeft);
+            samples[i] = filterState->lastSampleLeft;
+        }
+    }
+    else if (channelCount == 2) {
+        // Stereo processing | Traitement stéréo
+        for (uint32_t sample = 0; sample < sampleCount; sample++) {
+            uint32_t leftIdx = sample * 2;
+            uint32_t rightIdx = sample * 2 + 1;
+
+            if (!filterState->isInitialized) {
+                filterState->lastSampleLeft = samples[leftIdx];
+                filterState->lastSampleRight = samples[rightIdx];
+                filterState->isInitialized = TRUE;
+            }
+
+            filterState->lastSampleLeft += alpha * (samples[leftIdx] - filterState->lastSampleLeft);
+            float leftSecond = filterState->lastSampleLeft;
+            filterState->lastSampleLeft += alpha * 0.7f * (leftSecond - filterState->lastSampleLeft);
+            samples[leftIdx] = filterState->lastSampleLeft;
+
+            filterState->lastSampleRight += alpha * (samples[rightIdx] - filterState->lastSampleRight);
+            float rightSecond = filterState->lastSampleRight;
+            filterState->lastSampleRight += alpha * 0.7f * (rightSecond - filterState->lastSampleRight);
+            samples[rightIdx] = filterState->lastSampleRight;
+        }
+    }
+}
+
+// Apply air diffusion effect | Fonction pour appliquer l'effet de diffusion d'air
+static void applyAirDiffusion(float* samples, uint32_t sampleCount, uint16_t channelCount, float intensity) {
+    if (!samples || intensity <= 0.01f || sampleCount < 2) return;
+
+    const float diffusionFactor = intensity * 0.05f;
+
+    if (channelCount == 1) {
+        for (uint32_t i = 1; i < sampleCount; i++) {
+            float average = (samples[i - 1] + samples[i]) * 0.5f;
+            samples[i] = samples[i] * (1.0f - diffusionFactor) + average * diffusionFactor;
+        }
+    }
+    else if (channelCount == 2) {
+        for (uint32_t sample = 1; sample < sampleCount; sample++) {
+            uint32_t leftIdx = sample * 2;
+            uint32_t rightIdx = sample * 2 + 1;
+            uint32_t prevLeftIdx = (sample - 1) * 2;
+            uint32_t prevRightIdx = (sample - 1) * 2 + 1;
+
+            float avgLeft = (samples[prevLeftIdx] + samples[leftIdx]) * 0.5f;
+            float avgRight = (samples[prevRightIdx] + samples[rightIdx]) * 0.5f;
+
+            samples[leftIdx] = samples[leftIdx] * (1.0f - diffusionFactor) + avgLeft * diffusionFactor;
+            samples[rightIdx] = samples[rightIdx] * (1.0f - diffusionFactor) + avgRight * diffusionFactor;
+        }
+    }
+}
+
+// Cleanup low pass states | Fonction pour nettoyer les états de filtre passe-bas
+static void cleanupLowPassStates() {
+    lowPassStateCount = 0;
+    memset(lowPassStates, 0, sizeof(lowPassStates));
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Low-pass filter states cleaned up");
+    }
+}
+
+// ============================================================================
+// MODULE 8 : AUDIO - ÉTATS DES JOUEURS
+// ============================================================================
+
+// Find or create audio volume state | Fonction pour trouver ou créer l'état audio d'un utilisateur
+static AudioVolumeState* findOrCreateAudioVolumeState(mumble_userid_t userID) {
+    for (size_t i = 0; i < audioVolumeCount; i++) {
+        if (audioVolumeStates[i].userID == userID) {
+            return &audioVolumeStates[i];
+        }
+    }
+
+    if (audioVolumeCount < 64) {
+        AudioVolumeState* newState = &audioVolumeStates[audioVolumeCount];
+        newState->userID = userID;
+        newState->targetVolume = 1.0f;
+        newState->currentVolume = 1.0f;
+        newState->leftVolume = 1.0f;
+        newState->rightVolume = 1.0f;
+        newState->lastUpdate = GetTickCount64();
+        newState->isValid = true;
+        audioVolumeCount++;
+        return newState;
+    }
+
+    return NULL;
+}
+
+// Update user adaptive volume | Fonction pour mettre à jour le volume cible d'un utilisateur
+static void setUserAdaptiveVolume(mumble_userid_t userID, float targetVolume) {
+    AudioVolumeState* audioState = findOrCreateAudioVolumeState(userID);
+    if (audioState) {
+        float currentVolume = audioState->targetVolume;
+        float volumeDiff = fabsf(targetVolume - currentVolume);
+
+        if (volumeDiff > 0.3f) {
+            if (targetVolume > currentVolume) {
+                targetVolume = currentVolume + 0.3f;
+            }
+            else {
+                targetVolume = currentVolume - 0.3f;
+            }
+        }
+
+        audioState->targetVolume = targetVolume;
+        audioState->lastUpdate = GetTickCount64();
+
+        if (audioState->targetVolume < 0.0f) audioState->targetVolume = 0.0f;
+        if (audioState->targetVolume > 1.0f) audioState->targetVolume = 1.0f;
+    }
+}
+
+
+// Update volume with spatialization | Mettre à jour le volume avec spatialisation
+static void setUserAdaptiveVolumeWithSpatial(mumble_userid_t userID, float baseVolume, float leftVol, float rightVol) {
+    AudioVolumeState* audioState = findOrCreateAudioVolumeState(userID);
+    if (audioState) {
+        float volumeDiff = fabsf(baseVolume - audioState->targetVolume);
+        if (volumeDiff > 0.3f) {
+            if (baseVolume > audioState->targetVolume) {
+                baseVolume = audioState->targetVolume + 0.3f;
+            }
+            else {
+                baseVolume = audioState->targetVolume - 0.3f;
+            }
+        }
+
+        audioState->targetVolume = baseVolume;
+        audioState->leftVolume = leftVol;
+        audioState->rightVolume = rightVol;
+        audioState->lastUpdate = GetTickCount64();
+
+        if (audioState->targetVolume < 0.0f) audioState->targetVolume = 0.0f;
+        if (audioState->targetVolume > 1.0f) audioState->targetVolume = 1.0f;
+        if (audioState->leftVolume < 0.0f) audioState->leftVolume = 0.0f;
+        if (audioState->leftVolume > 1.0f) audioState->leftVolume = 1.0f;
+        if (audioState->rightVolume < 0.0f) audioState->rightVolume = 0.0f;
+        if (audioState->rightVolume > 1.0f) audioState->rightVolume = 1.0f;
+    }
+}
+
+// Cleanup audio volume states | Fonction pour nettoyer les états de volume audio
+static void cleanupAudioVolumeStates() {
+    audioVolumeCount = 0;
+    memset(audioVolumeStates, 0, sizeof(audioVolumeStates));
+
+    cleanupLowPassStates();
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Audio volume states and optimized low-pass filters cleaned up");
+    }
+}
+
+// ============================================================================
+// MODULE 9 : AUDIO - SYSTÈME ADAPTATIF
+// ============================================================================
+
+
+// Find or create adaptive player state | Trouver ou créer l'état adaptatif d'un joueur
+static AdaptivePlayerData* findOrCreateAdaptivePlayerState(mumble_userid_t userID, const char* playerName) {
+    for (size_t i = 0; i < adaptivePlayerCount; i++) {
+        if (adaptivePlayerStates[i].userID == userID) {
+            return &adaptivePlayerStates[i];
+        }
+    }
+
+    if (adaptivePlayerCount < 64) {
+        AdaptivePlayerData* newState = &adaptivePlayerStates[adaptivePlayerCount];
+        newState->userID = userID;
+        strncpy_s(newState->playerName, sizeof(newState->playerName), playerName, _TRUNCATE);
+        newState->currentVolume = 1.0f;
+        newState->isValid = false;
+        newState->lastVolumeUpdate = 0;
+        adaptivePlayerCount++;
+        return newState;
+    }
+
+    return NULL;
+}
+
+// Process adaptive volume data with hub parameters | Fonction principale de traitement du volume adaptatif avec paramètres hub
+static void processAdaptiveVolumeData(const CompletePositionalData* receivedData, mumble_userid_t senderID) {
+    if (!receivedData || !enableDistanceMuting) return;
+
+    ULONGLONG currentTime = GetTickCount64();
+
+    localPlayerPosition.x = localVoiceData.x;
+    localPlayerPosition.y = localVoiceData.y;
+    localPlayerPosition.z = localVoiceData.z;
+
+    Vector3 remotePosition = { receivedData->x, receivedData->y, receivedData->z };
+    float distance = calculateDistance3D(&localPlayerPosition, &remotePosition);
+
+    float targetVolume = calculateVolumeMultiplierWithHubSettings(distance, receivedData->voiceDistance);
+
+    setUserAdaptiveVolume(senderID, targetVolume);
+
+    AdaptivePlayerData* adaptiveState = findOrCreateAdaptivePlayerState(senderID, receivedData->playerName);
+    if (adaptiveState) {
+        adaptiveState->currentVolume = targetVolume;
+        adaptiveState->position = remotePosition;
+        adaptiveState->voiceDistance = receivedData->voiceDistance;
+        adaptiveState->isValid = true;
+        adaptiveState->lastVolumeUpdate = currentTime;
+    }
+}
+
+// Cleanup adaptive player states | Fonction de nettoyage pour le système adaptatif
+static void cleanupAdaptivePlayerStates() {
+    adaptivePlayerCount = 0;
+    memset(adaptivePlayerStates, 0, sizeof(adaptivePlayerStates));
+}
+
+// Get adaptive player volume | Fonction pour obtenir le volume d'un joueur
+static float getAdaptivePlayerVolume(mumble_userid_t userID) {
+    for (size_t i = 0; i < adaptivePlayerCount; i++) {
+        if (adaptivePlayerStates[i].userID == userID && adaptivePlayerStates[i].isValid) {
+            return adaptivePlayerStates[i].currentVolume;
+        }
+    }
+    return 0.0f;
+}
+
+// Check if player is audible | Fonction pour vérifier si un joueur est audible
+static bool isPlayerAdaptivelyAudible(mumble_userid_t userID) {
+    return getAdaptivePlayerVolume(userID) > MIN_AUDIBLE_VOLUME;
+}
+
+// Get distance to player | Fonction pour obtenir la distance à un joueur
+static float getAdaptiveDistanceToPlayer(mumble_userid_t userID) {
+    for (size_t i = 0; i < adaptivePlayerCount; i++) {
+        if (adaptivePlayerStates[i].userID == userID && adaptivePlayerStates[i].isValid) {
+            return calculateDistance3D(&localPlayerPosition, &adaptivePlayerStates[i].position);
+        }
+    }
+    return -1.0f;
+}
+
+// ============================================================================
+// MODULE 10 : AUDIO - APPLICATION DES DISTANCES
+// ============================================================================
+// Apply distance changes to all connected players | Appliquer les changements de distance à tous les joueurs connectés
+static void applyDistanceToAllPlayers() {
+    if (!enableDistanceMuting) return;
+
+    localPlayerPosition.x = localVoiceData.x;
+    localPlayerPosition.y = localVoiceData.y;
+    localPlayerPosition.z = localVoiceData.z;
+
+    // Recalculate all audio volumes | Recalculer tous les volumes audio
+    for (size_t i = 0; i < adaptivePlayerCount; i++) {
+        AdaptivePlayerData* adaptiveState = &adaptivePlayerStates[i];
+
+        if (adaptiveState->isValid) {
+            float distance = calculateDistance3D(&localPlayerPosition, &adaptiveState->position);
+            float maxHearingDistance = adaptiveState->voiceDistance;
+
+            float targetVolume = calculateVolumeMultiplier(distance, maxHearingDistance);
+
+            // Apply via audio system instead of mute | Appliquer via le système audio au lieu du mute
+            setUserAdaptiveVolume(adaptiveState->userID, targetVolume);
+
+            adaptiveState->currentVolume = targetVolume;
+
+            if (enableLogGeneral) {
+                static ULONGLONG lastInstantLog = 0;
+                ULONGLONG currentTime = GetTickCount64();
+                if (currentTime - lastInstantLog > 10000) {
+                    char logMsg[256];
+                    snprintf(logMsg, sizeof(logMsg),
+                        "Instant volume update: Player %s: Distance=%.1fm, Volume=%.0f%%",
+                        adaptiveState->playerName, distance, targetVolume * 100.0f);
+                    mumbleAPI.log(ownID, logMsg);
+                    lastInstantLog = currentTime;
+                }
+            }
+        }
+    }
+}  // ⭐ Appelée par Module 3 ET Module 12
+
+// ============================================================================
+// MODULE 11 : CALLBACK AUDIO MUMBLE
+// ============================================================================
+
+PLUGIN_EXPORT bool PLUGIN_CALLING_CONVENTION mumble_onAudioSourceFetched(
+    float* outputPCM,
+    uint32_t sampleCount,
+    uint16_t channelCount,
+    uint32_t sampleRate,
+    bool isSpeech,
+    mumble_userid_t userID) {
+
+    if (!isSpeech || !enableDistanceMuting) {
+        return false;
+    }
+
+    AudioVolumeState* audioState = findOrCreateAudioVolumeState(userID);
+    if (!audioState) {
+        return false;
+    }
+
+    // Volume smoothing | Lissage du volume
+    float volumeDifference = audioState->targetVolume - audioState->currentVolume;
+    float smoothingFactor = 0.25f;
+    audioState->currentVolume += volumeDifference * smoothingFactor;
+
+    // Get distance for filter | Récupérer la distance pour le filtre
+    float distance = 0.0f;
+    float voiceDistance = 15.0f;
+    bool hasDistanceData = false;
+
+    for (size_t i = 0; i < adaptivePlayerCount; i++) {
+        if (adaptivePlayerStates[i].userID == userID && adaptivePlayerStates[i].isValid) {
+            Vector3 localPos = { localPlayerPosition.x, localPlayerPosition.y, localPlayerPosition.z };
+            distance = (float)calculateDistance3D(&localPos, &adaptivePlayerStates[i].position);
+            voiceDistance = adaptivePlayerStates[i].voiceDistance;
+            hasDistanceData = true;
+            break;
+        }
+    }
+
+    // Silence if volume too low | Silence si volume trop faible
+    if (audioState->currentVolume < 0.02f) {
+        for (uint32_t i = 0; i < sampleCount * channelCount; i++) {
+            outputPCM[i] = 0.0f;
+        }
+        return true;
+    }
+
+    // Apply stereo/mono processing | Application stéréo/mono
+    if (channelCount == 2) {
+        float leftVolume = audioState->leftVolume;
+        float rightVolume = audioState->rightVolume;
+
+        static float lastLeftVolume[64] = { 0 };
+        static float lastRightVolume[64] = { 0 };
+
+        int userIndex = userID % 64;
+        float spatialSmoothFactor = 0.2f;
+
+        leftVolume = lastLeftVolume[userIndex] * (1.0f - spatialSmoothFactor) + leftVolume * spatialSmoothFactor;
+        rightVolume = lastRightVolume[userIndex] * (1.0f - spatialSmoothFactor) + rightVolume * spatialSmoothFactor;
+
+        lastLeftVolume[userIndex] = leftVolume;
+        lastRightVolume[userIndex] = rightVolume;
+
+        for (uint32_t sample = 0; sample < sampleCount; sample++) {
+            uint32_t leftIndex = sample * 2;
+            uint32_t rightIndex = sample * 2 + 1;
+
+            outputPCM[leftIndex] *= leftVolume;
+            outputPCM[rightIndex] *= rightVolume;
+        }
+    }
+    else {
+        float finalVolume = audioState->currentVolume;
+        for (uint32_t i = 0; i < sampleCount; i++) {
+            outputPCM[i] *= finalVolume;
+        }
+    }
+
+    // Smart filtering with AudioFilterIntensity | Nouveau filtre intelligent avec AudioFilterIntensity
+    if (!hasDistanceData) {
+        distance = 5.0f;
+        voiceDistance = 35.0f;
+    }
+
+    // Filter with curve controlled by AudioFilterIntensity | Filtre avec courbe contrôlée par AudioFilterIntensity
+    if (distance >= 0.0f && voiceDistance > 0.0f && hubAudioFilterIntensity > 0.01f) {
+        float minDistance = (float)hubAudioMinDistance;
+
+        float protectedZone = minDistance * 0.5f;
+        if (protectedZone < 1.0f) protectedZone = 1.0f;
+
+        float filterStartDistance = protectedZone;
+        float filterDistance = distance - filterStartDistance;
+
+        // No filter in protected zone | Pas de filtre dans la zone protégée
+        if (distance <= filterStartDistance) {
+            if (enableLogGeneral) {
+                static ULONGLONG lastClearLog = 0;
+                ULONGLONG currentTime = GetTickCount64();
+                if (currentTime - lastClearLog > 3000) {
+                    char logMsg[256];
+                    snprintf(logMsg, sizeof(logMsg),
+                        "🔊 CLEAR AUDIO: User=%u Dist=%.1fm (Protected zone ≤%.1fm) - No filter applied",
+                        userID, distance, filterStartDistance);
+                    mumbleAPI.log(ownID, logMsg);
+                    lastClearLog = currentTime;
+                }
+            }
+        }
+        else {
+            // Apply filter with controlled curve | Appliquer le filtre avec courbe contrôlée
+            float effectiveFilterRange = voiceDistance - filterStartDistance;
+            float filterRel = filterDistance / effectiveFilterRange;
+            if (filterRel > 1.0f) filterRel = 1.0f;
+            if (filterRel < 0.0f) filterRel = 0.0f;
+
+            float baseFilterStrength = filterRel;
+
+            float filterStrength;
+            if (hubAudioFilterIntensity <= 0.5f) {
+                float softness = (float)(0.5f - hubAudioFilterIntensity) * 2.0f;
+                filterStrength = powf(baseFilterStrength, 2.0f + softness * 2.0f);
+            }
+            else {
+                float aggressiveness = (float)(hubAudioFilterIntensity - 0.5f) * 2.0f;
+                filterStrength = powf(baseFilterStrength, 0.5f + aggressiveness * 0.3f);
+            }
+
+            filterStrength *= (float)hubAudioFilterIntensity;
+
+            float maxCutoff = 18000.0f;
+            float minCutoff = 200.0f;
+
+            float cutoffHz = maxCutoff - (filterStrength * (maxCutoff - minCutoff));
+
+            LowPassFilterState* filterState = findOrCreateLowPassState(userID);
+            if (filterState) {
+                applyLowPassFilter(outputPCM, sampleCount, channelCount, cutoffHz, sampleRate, filterState);
+
+                if (enableAirDiffusion && filterStrength >= 0.3f) {
+                    float diffusionIntensity = (float)(((float)filterStrength - 0.3f) / 0.7f * (float)hubAudioFilterIntensity);
+                    if (diffusionIntensity > 1.0f) diffusionIntensity = 1.0f;
+                    applyAirDiffusion(outputPCM, sampleCount, channelCount, diffusionIntensity);
+                }
+
+                if (enableLogGeneral) {
+                    static ULONGLONG lastFilterLog = 0;
+                    ULONGLONG currentTime = GetTickCount64();
+                    if (currentTime - lastFilterLog > 3000) {
+                        char logMsg[256];
+                        snprintf(logMsg, sizeof(logMsg),
+                            "🎛️ SMART FILTER: User=%u Dist=%.1fm FilterStr=%.2f Cutoff=%.0fHz Intensity=%.2f",
+                            userID, distance, filterStrength, cutoffHz, hubAudioFilterIntensity);
+                        mumbleAPI.log(ownID, logMsg);
+                        lastFilterLog = currentTime;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+// ============================================================================
+// MODULE 12 : SYSTÈME DE VOIX ET MODES
+// ============================================================================
+
+// Get voice distance for mode | Obtenir la distance de voix selon le mode
+static float getVoiceDistanceForMode(uint8_t voiceMode) {
+    switch (voiceMode) {
+    case 0: return distanceWhisper;
+    case 1: return distanceNormal;
+    case 2: return distanceShout;
+    default: return distanceNormal;
+    }
+}
+
+// Get local player name | Obtenir le nom du joueur local
+static void getLocalPlayerName() {
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) == MUMBLE_STATUS_OK) {
+        mumble_userid_t localUserID;
+        if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) == MUMBLE_STATUS_OK) {
+            const char* userName = NULL;
+            if (mumbleAPI.getUserName(ownID, connection, localUserID, &userName) == MUMBLE_STATUS_OK) {
+                if (userName) {
+                    strncpy_s(localVoiceData.playerName, sizeof(localVoiceData.playerName), userName, _TRUNCATE);
+                    mumbleAPI.freeMemory(ownID, userName);
+                }
+            }
+        }
+    }
+}
+
+// Voice mode cycling function | Fonction pour cycliser entre les modes de voix
+static void cycleVoiceMode() {
+    if (!enableVoiceToggle) return;
+
+    ULONGLONG currentTime = GetTickCount64();
+    if (currentTime - lastVoiceTogglePress < 300) return;
+    lastVoiceTogglePress = currentTime;
+
+    uint8_t currentVoiceMode = 1;
+
+    if (fabsf(localVoiceData.voiceDistance - distanceWhisper) < 0.5f) {
+        currentVoiceMode = 0;
+    }
+    else if (fabsf(localVoiceData.voiceDistance - distanceShout) < 0.5f) {
+        currentVoiceMode = 2;
+    }
+    else {
+        currentVoiceMode = 1;
+    }
+
+    uint8_t newMode;
+    switch (currentVoiceMode) {
+    case 1: newMode = 2; break;
+    case 2: newMode = 0; break;
+    case 0: newMode = 1; break;
+    default: newMode = 1; break;
+    }
+
+    localVoiceData.voiceDistance = getVoiceDistanceForMode(newMode);
+
+    lastVoiceDataSent = 0;
+    applyDistanceToAllPlayers();
+
+    updateVoiceOverlay();
+
+    char modeNames[][10] = { "Whisper", "Normal", "Shout" };
+    char chatMessage[128];
+    snprintf(chatMessage, sizeof(chatMessage),
+        "🔄 Voice mode switched to: %s - Distance: %.1f meters",
+        modeNames[newMode], localVoiceData.voiceDistance);
+    displayInChat(chatMessage);
+
+    if (enableLogGeneral) {
+        char logMsg[128];
+        snprintf(logMsg, sizeof(logMsg), "TOGGLE: Voice mode cycled to %s (Distance: %.1fm)",
+            modeNames[newMode], localVoiceData.voiceDistance);
+        mumbleAPI.log(ownID, logMsg);
+    }
+}
+
+static void updateVoiceMode() {
+    ULONGLONG currentTime = GetTickCount64();
+    if (currentTime - lastKeyCheck < 40) return;
+    lastKeyCheck = currentTime;
+
+    // CORRECTION: Déterminer le mode actuel depuis la distance réelle
+    // Determine current mode from actual distance | Déterminer le mode actuel depuis la distance réelle
+    uint8_t lastVoiceMode = 1; // Default Normal
+    if (fabsf(localVoiceData.voiceDistance - distanceWhisper) < 0.5f) {
+        lastVoiceMode = 0;
+    }
+    else if (fabsf(localVoiceData.voiceDistance - distanceShout) < 0.5f) {
+        lastVoiceMode = 2;
+    }
+    else {
+        lastVoiceMode = 1;
+    }
+
+    uint8_t newVoiceMode = lastVoiceMode;
+
+    if (enableVoiceToggle) {
+        if (GetAsyncKeyState(voiceToggleKey) & 0x8000) {
+            if (currentTime - lastVoiceTogglePress >= 200) {
+                lastVoiceTogglePress = currentTime;
+
+                switch (lastVoiceMode) {
+                case 1: newVoiceMode = 2; break; // Normal → Shout
+                case 2: newVoiceMode = 0; break; // Shout → Whisper  
+                case 0: newVoiceMode = 1; break; // Whisper → Normal
+                default: newVoiceMode = 1; break;
+                }
+
+                localVoiceData.voiceDistance = getVoiceDistanceForMode(newVoiceMode);
+
+                lastVoiceDataSent = 0;
+                applyDistanceToAllPlayers();
+
+                // CORRECTION: Force overlay update immediately | Forcer la mise à jour immédiate de l'overlay
+                updateVoiceOverlay();
+
+                char modeNames[][10] = { "Whisper", "Normal", "Shout" };
+                char chatMessage[128];
+                snprintf(chatMessage, sizeof(chatMessage),
+                    "🔄 Voice mode toggled to: %s - Distance: %.1f meters",
+                    modeNames[newVoiceMode], localVoiceData.voiceDistance);
+                displayInChat(chatMessage);
+            }
+        }
+        return;
+    }
+    else {
+        // Detection with priority and state memory | Détection avec priorité et mémorisation de l'état
+        static BOOL lastWhisperPressed = FALSE;
+        static BOOL lastShoutPressed = FALSE;
+        static BOOL lastNormalPressed = FALSE;
+
+        BOOL whisperPressed = (GetAsyncKeyState(whisperKey) & 0x8000) != 0;
+        BOOL shoutPressed = (GetAsyncKeyState(shoutKey) & 0x8000) != 0;
+        BOOL normalPressed = (GetAsyncKeyState(normalKey) & 0x8000) != 0;
+
+        // Detect NEW presses (rising edge) | Détecter les NOUVELLES pressions (front montant)
+        if (whisperPressed && !lastWhisperPressed) {
+            newVoiceMode = 0; // Whisper
+        }
+        else if (shoutPressed && !lastShoutPressed) {
+            newVoiceMode = 2; // Shout
+        }
+        else if (normalPressed && !lastNormalPressed) {
+            newVoiceMode = 1; // Normal
+        }
+
+        // Remember key states | Mémoriser l'état des touches
+        lastWhisperPressed = whisperPressed;
+        lastShoutPressed = shoutPressed;
+        lastNormalPressed = normalPressed;
+
+        if (newVoiceMode != lastVoiceMode) {
+            localVoiceData.voiceDistance = getVoiceDistanceForMode(newVoiceMode);
+
+            lastVoiceDataSent = 0;
+            applyDistanceToAllPlayers();
+
+            // CORRECTION: Force overlay update immediately | Forcer la mise à jour immédiate de l'overlay
+            updateVoiceOverlay();
+
+            char modeNames[][10] = { "Whisper", "Normal", "Shout" };
+            char chatMessage[128];
+            snprintf(chatMessage, sizeof(chatMessage),
+                "Voice mode: %s - Distance: %.1f meters",
+                modeNames[newVoiceMode],
+                localVoiceData.voiceDistance);
+
+            displayInChat(chatMessage);
+        }
+    }
+}
+
+static void calculateLocalPositionalData(CompletePositionalData* localData) {
+    if (!localData) return;
+
+    // Position in meters (correct conversion) | Position en mètres (conversion correcte)
+    localData->x = axe_x / 100.0f;
+    localData->y = axe_y / 100.0f;
+    localData->z = axe_z / 100.0f;
+
+    // Complete player direction | Direction complète du joueur
+    localData->dirX = avatarAxisX;
+    localData->dirY = avatarAxisY;
+    localData->dirZ = avatarAxisZ;
+
+    // Vertical axis (up vector) for complete orientation | Axe vertical (up vector) pour orientation complète
+    localData->axisX = 0.0f;
+    localData->axisY = 1.0f;
+    localData->axisZ = 0.0f;
+
+    // Voice distance according to current mode | Distance de voix selon le mode actuel
+    localData->voiceDistance = localVoiceData.voiceDistance;
+
+    // Player name | Nom du joueur
+    if (strlen(localVoiceData.playerName) > 0) {
+        strncpy_s(localData->playerName, sizeof(localData->playerName),
+            localVoiceData.playerName, _TRUNCATE);
+    }
+    else {
+        strcpy_s(localData->playerName, sizeof(localData->playerName), "Player");
+    }
+
+    // Debug logging of sent data | Log des données envoyées
+    if (enableLogGeneral) {
+        static ULONGLONG lastSendDebug = 0;
+        ULONGLONG currentTime = GetTickCount64();
+        if (currentTime - lastSendDebug > 3000) {
+            char debugMsg[512];
+            snprintf(debugMsg, sizeof(debugMsg),
+                "📤 SENDING COMPLETE DATA: Pos(%.1f,%.1f,%.1f) Dir(%.3f,%.3f,%.3f) Axis(%.1f,%.1f,%.1f) VoiceDist=%.1f Name='%s'",
+                localData->x, localData->y, localData->z,
+                localData->dirX, localData->dirY, localData->dirZ,
+                localData->axisX, localData->axisY, localData->axisZ,
+                localData->voiceDistance, localData->playerName);
+            mumbleAPI.log(ownID, debugMsg);
+            lastSendDebug = currentTime;
+        }
+    }
+}
+
+
+// Send complete positional data at 15ms intervals | Envoi des données positionnelles complètes à 15ms
+static void sendCompletePositionalData() {
+    ULONGLONG currentTime = GetTickCount64();
+    if (currentTime - lastVoiceDataSent < 15) return;
+    lastVoiceDataSent = currentTime;
+
+    mumble_connection_t connection;
+    if (mumbleAPI.getActiveServerConnection(ownID, &connection) != MUMBLE_STATUS_OK) {
+        return;
+    }
+
+    CompletePositionalData localData;
+    calculateLocalPositionalData(&localData);
+
+    // Critical logging of sent data | Log critique des données envoyées
+    if (enableLogGeneral) {
+        static ULONGLONG lastSendDebugLog = 0;
+        if (currentTime - lastSendDebugLog > 2000) {
+            char logMsg[512];
+            snprintf(logMsg, sizeof(logMsg),
+                "📤 SENDING RAW DATA: Pos(%.6f,%.6f,%.6f) Dir(%.6f,%.6f,%.6f) VoiceDist=%.6f Name='%s' LocalRaw(%.3f,%.3f,%.3f)",
+                localData.x, localData.y, localData.z, localData.dirX, localData.dirY, localData.dirZ,
+                localData.voiceDistance, localData.playerName, axe_x, axe_y, axe_z);
+            mumbleAPI.log(ownID, logMsg);
+            lastSendDebugLog = currentTime;
+        }
+    }
+
+    mumble_userid_t* allUsers = NULL;
+    size_t userCount = 0;
+
+    if (mumbleAPI.getAllUsers(ownID, connection, &allUsers, &userCount) == MUMBLE_STATUS_OK) {
+        if (allUsers && userCount > 0) {
+            mumble_error_t result = mumbleAPI.sendData(ownID, connection, allUsers, userCount,
+                (const uint8_t*)&localData, sizeof(CompletePositionalData),
+                "ConanExiles_CompletePositional");
+
+            mumbleAPI.freeMemory(ownID, allUsers);
+        }
+    }
+}
+
+static void calculateLocalPositionalAudio(const CompletePositionalData* remoteData, mumble_userid_t userID) {
+    if (!remoteData || !enableDistanceMuting) return;
+
+    // Local position in meters | Position locale en mètres
+    Vector3 localPos = {
+        axe_x / 100.0f,
+        axe_y / 100.0f,
+        axe_z / 100.0f
+    };
+
+    // Remote player position in meters | Position du joueur distant en mètres
+    Vector3 remotePos = { remoteData->x, remoteData->y, remoteData->z };
+
+    // Distance calculation | Calcul de distance
+    float dx = remotePos.x - localPos.x;
+    float dy = remotePos.y - localPos.y;
+    float dz = remotePos.z - localPos.z;
+    float distanceInMeters = sqrtf(dx * dx + dy * dy + dz * dz);
+
+    // TRUE stereo spatialization | Spatialisation stéréo vraie
+    float toRemoteX = remotePos.x - localPos.x;
+    float toRemoteY = remotePos.y - localPos.y;
+    float toRemoteZ = remotePos.z - localPos.z;
+
+    float toRemoteLen = sqrtf(toRemoteX * toRemoteX + toRemoteY * toRemoteY + toRemoteZ * toRemoteZ);
+    if (toRemoteLen > 1e-6f) {
+        toRemoteX /= toRemoteLen;
+        toRemoteY /= toRemoteLen;
+        toRemoteZ /= toRemoteLen;
+    }
+
+    float localDirX = avatarAxisX;
+    float localDirY = avatarAxisY;
+    float localDirZ = avatarAxisZ;
+
+    float frontBack = localDirX * toRemoteX + localDirY * toRemoteY + localDirZ * toRemoteZ;
+
+    // Invert calculation to fix left/right | Inverser le calcul pour corriger gauche/droite
+    float leftRight = (localDirX * toRemoteZ - localDirZ * toRemoteX);
+
+    // Gradual transition instead of abrupt on/off | Transition graduelle au lieu de on/off brutal
+    float leftVolume = 1.0f;
+    float rightVolume = 1.0f;
+
+    // Progressive stereo panning settings | Réglages du panoramique stéréo progressif
+    const float MIN_PAN_THRESHOLD = 0.05f;  // Central zone (equal sound) | Zone centrale (son égal)
+    const float MAX_PAN_INTENSITY = 0.85f;  // Maximum pan intensity (85% instead of 70%) | Intensité maximale du panoramique (85% au lieu de 70%)
+    const float PAN_CURVE = 1.5f;           // Transition curve (1.5 = soft, 2.0 = normal, 3.0 = aggressive) | Courbe de transition (1.5 = doux, 2.0 = normal, 3.0 = agressif)
+
+    // Calculate panning with gradual transition | Calcul du panoramique avec transition graduelle
+    if (fabsf(leftRight) > MIN_PAN_THRESHOLD) {
+        float panAmount = fabsf(leftRight);
+        panAmount = fminf(panAmount, 1.0f);
+
+        float smoothPan = powf(panAmount, 1.0f / PAN_CURVE);
+        float attenuation = smoothPan * MAX_PAN_INTENSITY;
+
+        // CORRECTION: Inverser l'application des volumes (pas le calcul)
+        if (leftRight > MIN_PAN_THRESHOLD) {
+            // AVANT: rightVolume plein, leftVolume réduit
+            // APRÈS: leftVolume plein, rightVolume réduit
+            leftVolume = 1.0f;
+            rightVolume = 1.0f - attenuation;
+            if (rightVolume < 0.15f) rightVolume = 0.15f;
+        }
+        else if (leftRight < -MIN_PAN_THRESHOLD) {
+            // AVANT: leftVolume plein, rightVolume réduit
+            // APRÈS: rightVolume plein, leftVolume réduit
+            rightVolume = 1.0f;
+            leftVolume = 1.0f - attenuation;
+            if (leftVolume < 0.15f) leftVolume = 0.15f;
+        }
+    }
+
+    // Rear effect - Gradual transition also | Effet arrière - Transition graduelle aussi
+    if (frontBack < -0.2f) {
+        float backFactor = fabsf(frontBack + 0.2f) / 0.8f; // Normalize 0.0 to 1.0 | Normaliser 0.0 à 1.0
+        backFactor = fminf(backFactor, 1.0f);
+
+        // Smooth transition for rear effect | Transition douce pour l'effet arrière
+        float backAttenuation = 0.85f - (backFactor * 0.35f); // From 0.85 to 0.50 | De 0.85 à 0.50
+        leftVolume *= backAttenuation;
+        rightVolume *= backAttenuation;
+    }
+
+    // Main volume calculation by distance | Calcul du volume principal selon la distance
+    float voiceVolume = calculateVolumeMultiplierWithHubSettings(distanceInMeters, remoteData->voiceDistance);
+    float finalLeftVolume = leftVolume * voiceVolume;
+    float finalRightVolume = rightVolume * voiceVolume;
+    float avgVolume = (finalLeftVolume + finalRightVolume) * 0.5f;
+
+    // Apply TRUE stereo volumes | Appliquer les VRAIS volumes stéréo
+    setUserAdaptiveVolumeWithSpatial(userID, avgVolume, finalLeftVolume, finalRightVolume);
+
+    // Debug logging | Log pour debug
+    if (enableLogGeneral) {
+        static ULONGLONG lastResultLog = 0;
+        ULONGLONG currentTime = GetTickCount64();
+        if (currentTime - lastResultLog > 3000) {
+            char resultMsg[256];
+            snprintf(resultMsg, sizeof(resultMsg),
+                "🔊 FIXED STEREO: Player='%s' Dist=%.1fm Pan=%.2f L=%.0f%% R=%.0f%% (CORRECTED+SMOOTH)",
+                remoteData->playerName, distanceInMeters, leftRight,
+                finalLeftVolume * 100.0f, finalRightVolume * 100.0f);
+            mumbleAPI.log(ownID, resultMsg);
+            lastResultLog = currentTime;
+        }
+    }
+}
+
+// Process received voice data with maximum reactivity | Traitement des données de voix reçues avec réactivité maximale
+static void processReceivedVoiceData(const CompletePositionalData* receivedData, mumble_userid_t senderID) {
+    processAdaptiveVolumeData(receivedData, senderID);
+}
+
+// ============================================================================
+// MODULE 13 : OVERLAY VOCAL
+// ============================================================================
+
+static void setOverlayHighlightState(mumble_userid_t userID, mumble_connection_t connection, BOOL highlight) {
+    // Ne pas modifier de texte, ne rien envoyer au serveur — uniquement UI locale
+    if (highlight) {
+        overlayBorderHighlight = TRUE;
+        overlayHighlightUserID = userID;
+    }
+    else {
+        if (overlayBorderHighlight && overlayHighlightUserID == userID) {
+            overlayBorderHighlight = FALSE;
+            overlayHighlightUserID = 0;
+        }
+    }
+
+    if (hVoiceOverlay && IsWindow(hVoiceOverlay)) {
+        InvalidateRect(hVoiceOverlay, NULL, TRUE);
+        UpdateWindow(hVoiceOverlay);
+    }
+}
+
+// Get current voice mode text | Obtenir le texte du mode de voix actuel
+static const char* getCurrentVoiceModeText() {
+    if (localVoiceData.voiceDistance <= distanceWhisper + 0.5f) {
+        return "WHISPER";
+    }
+    else if (localVoiceData.voiceDistance <= distanceNormal + 0.5f) {
+        return "NORMAL";
+    }
+    else {
+        return "SHOUT";
+    }
+}
+
+// Voice overlay window procedure | Procédure de fenêtre pour l'overlay vocal
+static LRESULT CALLBACK VoiceOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE:
+        InitializeCriticalSection(&overlayTextLock);
+        return 0;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+
+        // Fond noir transparent
+        HBRUSH hClearBrush = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &rect, hClearBrush);
+        DeleteObject(hClearBrush);
+
+        // Bordure subtile interne
+        HPEN hSubtlePen = CreatePen(PS_SOLID, 1, RGB(200, 200, 200));
+        HPEN hOldPen = (HPEN)SelectObject(hdc, hSubtlePen);
+        HBRUSH hNullBrush = (HBRUSH)GetStockObject(NULL_BRUSH);
+        HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hNullBrush);
+        Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
+        SelectObject(hdc, hOldPen);
+        SelectObject(hdc, hOldBrush);
+        DeleteObject(hSubtlePen);
+
+        // Si surbrillance active, dessiner une bordure blanche épaisse autour
+        if (overlayBorderHighlight) {
+            HPEN hWhitePen = CreatePen(PS_SOLID, 3, RGB(255, 255, 255));
+            HPEN hPrev = (HPEN)SelectObject(hdc, hWhitePen);
+            Rectangle(hdc, rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1);
+            SelectObject(hdc, hPrev);
+            DeleteObject(hWhitePen);
+        }
+
+        // Texte: si overlaySpeakerText non vide, l'afficher ; sinon afficher le mode local (comportement existant)
+        char textBuffer[128] = { 0 };
+        EnterCriticalSection(&overlayTextLock);
+        if (overlaySpeakerText[0] != '\0') {
+            strncpy_s(textBuffer, sizeof(textBuffer), overlaySpeakerText, _TRUNCATE);
+        }
+        LeaveCriticalSection(&overlayTextLock);
+
+        const char* modeText = textBuffer;
+        if (modeText[0] == '\0') {
+            modeText = getCurrentVoiceModeText();
+        }
+
+        // Texte et ombre
+        SetBkMode(hdc, TRANSPARENT);
+        HFONT hSafeFont = CreateFontA(
+            17, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Arial"
+        );
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hSafeFont);
+
+        SIZE textSize;
+        GetTextExtentPoint32A(hdc, modeText, (int)strlen(modeText), &textSize);
+        int textX = (rect.right - rect.left - textSize.cx) / 2;
+        int textY = (rect.bottom - rect.top - textSize.cy) / 2;
+        if (textX < 0) textX = 2;
+        if (textY < 0) textY = 2;
+
+        SetTextColor(hdc, RGB(0, 0, 0));
+        TextOutA(hdc, textX + 1, textY + 1, modeText, (int)strlen(modeText));
+        SetTextColor(hdc, RGB(140, 140, 140));
+        TextOutA(hdc, textX, textY, modeText, (int)strlen(modeText));
+
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hSafeFont);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_DESTROY:
+        DeleteCriticalSection(&overlayTextLock);
+        return 0;
+
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+}
+
+// Create voice overlay | Créer l'overlay vocal
+static void createVoiceOverlay() {
+    if (hVoiceOverlay != NULL) return;
+    if (!enableVoiceOverlay) return;
+
+    // Register window class | Enregistrer la classe de fenêtre
+    const wchar_t OVERLAY_CLASS_NAME[] = L"VoiceOverlayClass";
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = VoiceOverlayProc;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.lpszClassName = OVERLAY_CLASS_NAME;
+    wc.hbrBackground = NULL;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+    UnregisterClassW(OVERLAY_CLASS_NAME, wc.hInstance);
+    if (RegisterClassW(&wc) == 0) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "ERROR: Failed to register overlay window class");
+        }
+        return;
+    }
+
+    // Get screen dimensions | Obtenir les dimensions de l'écran
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    // Overlay dimensions | Dimensions de l'overlay
+    int overlayWidth = 130;
+    int overlayHeight = 32;
+
+    // Position at bottom right | Position en bas à droite
+    int posX = screenWidth - overlayWidth - 25;
+    int posY = screenHeight - (screenHeight * 2 / 100) - overlayHeight;
+
+    // Create with extended styles for fullscreen compatibility | Créer avec styles étendus pour compatibilité plein écran
+    hVoiceOverlay = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        OVERLAY_CLASS_NAME,
+        L"",
+        WS_POPUP,
+        posX, posY, overlayWidth, overlayHeight,
+        NULL, NULL, wc.hInstance, NULL
+    );
+
+    if (hVoiceOverlay) {
+        // Set transparency | Définir la transparence
+        SetLayeredWindowAttributes(hVoiceOverlay, RGB(0, 0, 0), 100, LWA_ALPHA);
+
+        // Force maximum z-order for fullscreen compatibility | Forcer l'ordre z maximum pour compatibilité plein écran
+        SetWindowPos(hVoiceOverlay, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        // Additional fullscreen compatibility measures | Mesures supplémentaires pour compatibilité plein écran
+        LONG_PTR exStyle = GetWindowLongPtrW(hVoiceOverlay, GWL_EXSTYLE);
+        exStyle |= WS_EX_TOPMOST;
+        SetWindowLongPtrW(hVoiceOverlay, GWL_EXSTYLE, exStyle);
+
+        // Show window | Afficher la fenêtre
+        ShowWindow(hVoiceOverlay, SW_SHOWNOACTIVATE);
+        UpdateWindow(hVoiceOverlay);
+
+        // Force immediate redraw | Forcer le redessin immédiat
+        InvalidateRect(hVoiceOverlay, NULL, TRUE);
+
+        if (enableLogGeneral) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Voice overlay created with FULLSCREEN COMPATIBILITY at (%d, %d)",
+                posX, posY);
+            mumbleAPI.log(ownID, msg);
+        }
+    }
+    else {
+        DWORD error = GetLastError();
+        if (enableLogGeneral) {
+            char errorMsg[128];
+            snprintf(errorMsg, sizeof(errorMsg), "ERROR: Failed to create overlay window. Error: %lu", error);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+    }
+}
+
+// Add fullscreen overlay refresh function | Ajouter fonction de rafraîchissement pour plein écran
+static void refreshOverlayForFullscreen() {
+    if (!hVoiceOverlay || !IsWindow(hVoiceOverlay)) return;
+
+    // Force overlay to stay on top of fullscreen applications | Forcer l'overlay à rester au-dessus des applications plein écran
+    SetWindowPos(hVoiceOverlay, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    // Refresh window properties | Rafraîchir les propriétés de la fenêtre
+    LONG_PTR exStyle = GetWindowLongPtrW(hVoiceOverlay, GWL_EXSTYLE);
+    exStyle |= WS_EX_TOPMOST;
+    SetWindowLongPtrW(hVoiceOverlay, GWL_EXSTYLE, exStyle);
+
+    ShowWindow(hVoiceOverlay, SW_SHOWNOACTIVATE);
+    InvalidateRect(hVoiceOverlay, NULL, TRUE);
+    UpdateWindow(hVoiceOverlay);
+}
+
+// Reposition voice overlay | Repositionner l'overlay vocal
+static void repositionVoiceOverlay() {
+    if (!hVoiceOverlay) return;
+
+    // Get new screen dimensions | Obtenir les nouvelles dimensions d'écran
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    // Overlay dimensions | Dimensions de l'overlay
+    int overlayWidth = 120;
+    int overlayHeight = 35;
+
+    // New lower position | Nouvelle position plus basse
+    int posX = screenWidth - overlayWidth - 20;
+    int posY = screenHeight - (screenHeight * 2 / 100) - overlayHeight;
+
+    // Reposition | Repositionner
+    SetWindowPos(hVoiceOverlay, HWND_TOPMOST, posX, posY, 0, 0,
+        SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    if (enableLogGeneral) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Voice overlay repositioned to LOWER position (%d, %d) for screen %dx%d",
+            posX, posY, screenWidth, screenHeight);
+        mumbleAPI.log(ownID, msg);
+    }
+}
+
+// Update voice overlay display | Mettre à jour l'affichage de l'overlay
+static void updateVoiceOverlay() {
+    if (hVoiceOverlay && enableVoiceOverlay && IsWindow(hVoiceOverlay)) {
+        // Force complete window redraw | Forcer le redessin complet de la fenêtre
+        InvalidateRect(hVoiceOverlay, NULL, TRUE);
+        UpdateWindow(hVoiceOverlay);
+
+        // Ensure overlay stays on top | S'assurer que l'overlay reste au premier plan
+        SetWindowPos(hVoiceOverlay, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+}
+
+// Destroy voice overlay | Détruire l'overlay vocal
+static void destroyVoiceOverlay() {
+    if (hVoiceOverlay) {
+        DestroyWindow(hVoiceOverlay);
+        hVoiceOverlay = NULL;
+
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Voice overlay destroyed");
+        }
+    }
+
+    if (hOverlayFont) {
+        DeleteObject(hOverlayFont);
+        hOverlayFont = NULL;
+    }
+}
+
+// Resolution monitor thread | Thread pour surveiller les changements de résolution
+static void overlayMonitorThread(void* arg) {
+    overlayThreadRunning = TRUE;
+
+    int lastScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int lastScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Voice overlay monitor thread started with fullscreen support");
+    }
+
+    while (overlayThreadRunning && enableGetPlayerCoordinates) {
+        int currentScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+        int currentScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+        if (currentScreenWidth != lastScreenWidth || currentScreenHeight != lastScreenHeight) {
+            if (enableLogGeneral) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Screen resolution changed: %dx%d -> %dx%d",
+                    lastScreenWidth, lastScreenHeight, currentScreenWidth, currentScreenHeight);
+                mumbleAPI.log(ownID, msg);
+            }
+
+            repositionVoiceOverlay();
+            lastScreenWidth = currentScreenWidth;
+            lastScreenHeight = currentScreenHeight;
+        }
+
+        static int refreshCounter = 0;
+        refreshCounter++;
+        if (refreshCounter >= 5) {
+            refreshOverlayForFullscreen();
+            refreshCounter = 0;
+        }
+
+        Sleep(2000);
+    }
+
+    overlayThreadRunning = FALSE;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Voice overlay monitor thread stopped");
+    }
+}
+
+// ============================================================================
+// MODULE 14 : INTERFACE UTILISATEUR
+// ============================================================================
+
+// Force window to foreground without affecting mouse | Forcer la fenêtre au premier plan sans affecter la souris
+static void forceWindowToForegroundNoMouse(HWND hwnd) {
+    ShowWindow(hwnd, SW_SHOW);
+
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+
+    // Force activation without mouse manipulation | Forcer l'activation sans manipulation de la souris
+    DWORD currentThreadId = GetCurrentThreadId();
+    DWORD foregroundThreadId = GetWindowThreadProcessId(GetForegroundWindow(), NULL);
+
+    if (currentThreadId != foregroundThreadId) {
+        AttachThreadInput(currentThreadId, foregroundThreadId, TRUE);
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        AttachThreadInput(currentThreadId, foregroundThreadId, FALSE);
+    }
+    else {
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+    }
+
+    BringWindowToTop(hwnd);
+}
+
+// Show/hide controls based on category | Afficher/masquer les contrôles selon la catégorie
+static void ShowCategoryControls(int category) {
+    currentCategory = category;
+
+    HWND hExplanation1 = GetDlgItem(hConfigDialog, 401);
+    HWND hExplanation2 = GetDlgItem(hConfigDialog, 402);
+    HWND hExplanation3 = GetDlgItem(hConfigDialog, 403);
+    HWND hPathLabel = GetDlgItem(hConfigDialog, 404);
+
+    HWND hPluginLabel = GetDlgItem(hConfigDialog, 501);
+    HWND hKeyLabel = GetDlgItem(hConfigDialog, 502);
+    HWND hWhisperLabel = GetDlgItem(hConfigDialog, 503);
+    HWND hNormalLabel = GetDlgItem(hConfigDialog, 504);
+    HWND hShoutLabel = GetDlgItem(hConfigDialog, 505);
+    HWND hConfigLabel = GetDlgItem(hConfigDialog, 506);
+    HWND hConfigExplain = GetDlgItem(hConfigDialog, 507);
+    HWND hDistanceLabel = GetDlgItem(hConfigDialog, 508);
+    HWND hDistanceWhisperLabel = GetDlgItem(hConfigDialog, 509);
+    HWND hDistanceNormalLabel = GetDlgItem(hConfigDialog, 510);
+    HWND hDistanceShoutLabel = GetDlgItem(hConfigDialog, 511);
+    HWND hToggleLabel = GetDlgItem(hConfigDialog, 514);
+
+    if (category == 1) { // Patch Configuration
+        if (hExplanation1) ShowWindow(hExplanation1, SW_SHOW);
+        if (hExplanation2) ShowWindow(hExplanation2, SW_SHOW);
+        if (hExplanation3) ShowWindow(hExplanation3, SW_SHOW);
+        if (hPathLabel) ShowWindow(hPathLabel, SW_SHOW);
+        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_SHOW);
+        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_SHOW);
+
+        // Hide advanced options | Masquer les options avancées
+        if (hPluginLabel) ShowWindow(hPluginLabel, SW_HIDE);
+        if (hKeyLabel) ShowWindow(hKeyLabel, SW_HIDE);
+        if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_HIDE);
+        if (hNormalLabel) ShowWindow(hNormalLabel, SW_HIDE);
+        if (hShoutLabel) ShowWindow(hShoutLabel, SW_HIDE);
+        if (hConfigLabel) ShowWindow(hConfigLabel, SW_HIDE);
+        if (hConfigExplain) ShowWindow(hConfigExplain, SW_HIDE);
+        if (hDistanceLabel) ShowWindow(hDistanceLabel, SW_HIDE);
+        if (hDistanceWhisperLabel) ShowWindow(hDistanceWhisperLabel, SW_HIDE);
+        if (hDistanceNormalLabel) ShowWindow(hDistanceNormalLabel, SW_HIDE);
+        if (hDistanceShoutLabel) ShowWindow(hDistanceShoutLabel, SW_HIDE);
+        if (hWhisperKeyEdit) ShowWindow(hWhisperKeyEdit, SW_HIDE);
+        if (hWhisperButton) ShowWindow(hWhisperButton, SW_HIDE);
+        if (hNormalKeyEdit) ShowWindow(hNormalKeyEdit, SW_HIDE);
+        if (hNormalButton) ShowWindow(hNormalButton, SW_HIDE);
+        if (hShoutKeyEdit) ShowWindow(hShoutKeyEdit, SW_HIDE);
+        if (hShoutButton) ShowWindow(hShoutButton, SW_HIDE);
+        if (hConfigKeyEdit) ShowWindow(hConfigKeyEdit, SW_HIDE);
+        if (hConfigButton) ShowWindow(hConfigButton, SW_HIDE);
+        if (hEnableDistanceMutingCheck) ShowWindow(hEnableDistanceMutingCheck, SW_HIDE);
+        if (hEnableAutomaticChannelChangeCheck) ShowWindow(hEnableAutomaticChannelChangeCheck, SW_HIDE);
+        if (hDistanceWhisperEdit) ShowWindow(hDistanceWhisperEdit, SW_HIDE);
+        if (hDistanceNormalEdit) ShowWindow(hDistanceNormalEdit, SW_HIDE);
+        if (hDistanceShoutEdit) ShowWindow(hDistanceShoutEdit, SW_HIDE);
+        if (hEnableVoiceToggleCheck) ShowWindow(hEnableVoiceToggleCheck, SW_HIDE);
+        if (hVoiceToggleKeyEdit) ShowWindow(hVoiceToggleKeyEdit, SW_HIDE);
+        if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_HIDE);
+        if (hToggleLabel) ShowWindow(hToggleLabel, SW_HIDE);
+
+        // CORRECTION: Masquer ET effacer les messages dans Patch Configuration
+        if (hDistanceWhisperMessage) {
+            SetWindowTextW(hDistanceWhisperMessage, L"");
+            InvalidateRect(hDistanceWhisperMessage, NULL, TRUE);
+            UpdateWindow(hDistanceWhisperMessage);
+            ShowWindow(hDistanceWhisperMessage, SW_HIDE);
+        }
+        if (hDistanceNormalMessage) {
+            SetWindowTextW(hDistanceNormalMessage, L"");
+            InvalidateRect(hDistanceNormalMessage, NULL, TRUE);
+            UpdateWindow(hDistanceNormalMessage);
+            ShowWindow(hDistanceNormalMessage, SW_HIDE);
+        }
+        if (hDistanceShoutMessage) {
+            SetWindowTextW(hDistanceShoutMessage, L"");
+            InvalidateRect(hDistanceShoutMessage, NULL, TRUE);
+            UpdateWindow(hDistanceShoutMessage);
+            ShowWindow(hDistanceShoutMessage, SW_HIDE);
+        }
+        if (hDistanceMutingMessage) {
+            SetWindowTextW(hDistanceMutingMessage, L"");
+            InvalidateRect(hDistanceMutingMessage, NULL, TRUE);
+            UpdateWindow(hDistanceMutingMessage);
+            ShowWindow(hDistanceMutingMessage, SW_HIDE);
+        }
+        if (hChannelSwitchingMessage) {
+            SetWindowTextW(hChannelSwitchingMessage, L"");
+            InvalidateRect(hChannelSwitchingMessage, NULL, TRUE);
+            UpdateWindow(hChannelSwitchingMessage);
+            ShowWindow(hChannelSwitchingMessage, SW_HIDE);
+        }
+        if (hPositionalAudioMessage) {
+            SetWindowTextW(hPositionalAudioMessage, L"");
+            InvalidateRect(hPositionalAudioMessage, NULL, TRUE);
+            UpdateWindow(hPositionalAudioMessage);
+            ShowWindow(hPositionalAudioMessage, SW_HIDE);
+        }
+
+    }
+    else if (category == 2) { // Advanced Options
+        if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
+        if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
+        if (hExplanation3) ShowWindow(hExplanation3, SW_HIDE);
+        if (hPathLabel) ShowWindow(hPathLabel, SW_HIDE);
+        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_HIDE);
+        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_HIDE);
+        if (hPluginLabel) ShowWindow(hPluginLabel, SW_SHOW);
+        if (hKeyLabel) ShowWindow(hKeyLabel, SW_SHOW);
+        if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_SHOW);
+        if (hNormalLabel) ShowWindow(hNormalLabel, SW_SHOW);
+        if (hShoutLabel) ShowWindow(hShoutLabel, SW_SHOW);
+        if (hConfigLabel) ShowWindow(hConfigLabel, SW_SHOW);
+        if (hConfigExplain) ShowWindow(hConfigExplain, SW_SHOW);
+        if (hDistanceLabel) ShowWindow(hDistanceLabel, SW_SHOW);
+        if (hDistanceWhisperLabel) ShowWindow(hDistanceWhisperLabel, SW_SHOW);
+        if (hDistanceNormalLabel) ShowWindow(hDistanceNormalLabel, SW_SHOW);
+        if (hDistanceShoutLabel) ShowWindow(hDistanceShoutLabel, SW_SHOW);
+        if (hWhisperKeyEdit) ShowWindow(hWhisperKeyEdit, SW_SHOW);
+        if (hWhisperButton) ShowWindow(hWhisperButton, SW_SHOW);
+        if (hNormalKeyEdit) ShowWindow(hNormalKeyEdit, SW_SHOW);
+        if (hNormalButton) ShowWindow(hNormalButton, SW_SHOW);
+        if (hShoutKeyEdit) ShowWindow(hShoutKeyEdit, SW_SHOW);
+        if (hShoutButton) ShowWindow(hShoutButton, SW_SHOW);
+        if (hConfigKeyEdit) ShowWindow(hConfigKeyEdit, SW_SHOW);
+        if (hConfigButton) ShowWindow(hConfigButton, SW_SHOW);
+        if (hEnableDistanceMutingCheck) ShowWindow(hEnableDistanceMutingCheck, SW_SHOW);
+        if (hEnableAutomaticChannelChangeCheck) ShowWindow(hEnableAutomaticChannelChangeCheck, SW_SHOW);
+        if (hDistanceWhisperEdit) ShowWindow(hDistanceWhisperEdit, SW_SHOW);
+        if (hDistanceNormalEdit) ShowWindow(hDistanceNormalEdit, SW_SHOW);
+        if (hDistanceShoutEdit) ShowWindow(hDistanceShoutEdit, SW_SHOW);
+        if (hEnableVoiceToggleCheck) ShowWindow(hEnableVoiceToggleCheck, SW_SHOW);
+        if (hVoiceToggleKeyEdit) ShowWindow(hVoiceToggleKeyEdit, SW_SHOW);
+        if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_SHOW);
+        if (hToggleLabel) ShowWindow(hToggleLabel, SW_SHOW);
+
+        // CORRECTION: Afficher les messages seulement dans Advanced Options
+        if (hDistanceWhisperMessage) ShowWindow(hDistanceWhisperMessage, SW_SHOW);
+        if (hDistanceNormalMessage) ShowWindow(hDistanceNormalMessage, SW_SHOW);
+        if (hDistanceShoutMessage) ShowWindow(hDistanceShoutMessage, SW_SHOW);
+        if (hDistanceMutingMessage) ShowWindow(hDistanceMutingMessage, SW_SHOW);
+        if (hChannelSwitchingMessage) ShowWindow(hChannelSwitchingMessage, SW_SHOW);
+        if (hPositionalAudioMessage) ShowWindow(hPositionalAudioMessage, SW_SHOW);
+
+        // CORRECTION: Mettre à jour les messages après les avoir affichés
+        updateDynamicInterface();
+
+        // CORRECTION: Forcer un redessin immédiat
+        Sleep(50);
+        InvalidateRect(hConfigDialog, NULL, TRUE);
+        UpdateWindow(hConfigDialog);
+    }
+
+    if (hCategoryPatch && hCategoryAdvanced) {
+        SendMessage(hCategoryPatch, BM_SETSTATE, (category == 1) ? TRUE : FALSE, 0);
+        SendMessage(hCategoryAdvanced, BM_SETSTATE, (category == 2) ? TRUE : FALSE, 0);
+    }
+}
+
+// Apply font to control | Appliquer la police à un contrôle
+static void ApplyFontToControl(HWND control, HFONT font) {
+    if (font && control) {
+        SendMessageW(control, WM_SETFONT, (WPARAM)font, TRUE);
+    }
+}
+
+// Modern folder browser | Fonction pour parcourir les dossiers (moderne)
+static void browseSavedPath(HWND hwnd) {
     HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr)) {
         MessageBoxW(hwnd, L"Failed to initialize COM", L"Error", MB_OK | MB_ICONERROR);
@@ -1551,242 +3463,8 @@ void browseSavedPath(HWND hwnd) {
     CoUninitialize();
 }
 
-// Fonction pour afficher/masquer les contrôles selon la catégorie | Show/hide controls based on category
-void ShowCategoryControls(int category) {
-    currentCategory = category;
-
-    HWND hExplanation1 = GetDlgItem(hConfigDialog, 401);
-    HWND hExplanation2 = GetDlgItem(hConfigDialog, 402);
-    HWND hExplanation3 = GetDlgItem(hConfigDialog, 403);
-    HWND hPathLabel = GetDlgItem(hConfigDialog, 404);
-
-    HWND hPluginLabel = GetDlgItem(hConfigDialog, 501);
-    HWND hKeyLabel = GetDlgItem(hConfigDialog, 502);
-    HWND hWhisperLabel = GetDlgItem(hConfigDialog, 503);
-    HWND hNormalLabel = GetDlgItem(hConfigDialog, 504);
-    HWND hShoutLabel = GetDlgItem(hConfigDialog, 505);
-    HWND hConfigLabel = GetDlgItem(hConfigDialog, 506);
-    HWND hConfigExplain = GetDlgItem(hConfigDialog, 507);
-    HWND hDistanceLabel = GetDlgItem(hConfigDialog, 508);
-    HWND hDistanceWhisperLabel = GetDlgItem(hConfigDialog, 509);
-    HWND hDistanceNormalLabel = GetDlgItem(hConfigDialog, 510);
-    HWND hDistanceShoutLabel = GetDlgItem(hConfigDialog, 511);
-    HWND hToggleLabel = GetDlgItem(hConfigDialog, 514);
-    if (category == 1) { // Patch Configuration
-        if (hExplanation1) ShowWindow(hExplanation1, SW_SHOW);
-        if (hExplanation2) ShowWindow(hExplanation2, SW_SHOW);
-        if (hExplanation3) ShowWindow(hExplanation3, SW_SHOW);
-        if (hPathLabel) ShowWindow(hPathLabel, SW_SHOW);
-        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_SHOW);
-        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_SHOW);
-
-        // Masquer les options avancées
-        if (hPluginLabel) ShowWindow(hPluginLabel, SW_HIDE);
-        if (hKeyLabel) ShowWindow(hKeyLabel, SW_HIDE);
-        if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_HIDE);
-        if (hNormalLabel) ShowWindow(hNormalLabel, SW_HIDE);
-        if (hShoutLabel) ShowWindow(hShoutLabel, SW_HIDE);
-        if (hConfigLabel) ShowWindow(hConfigLabel, SW_HIDE);
-        if (hConfigExplain) ShowWindow(hConfigExplain, SW_HIDE);
-        if (hDistanceLabel) ShowWindow(hDistanceLabel, SW_HIDE);
-        if (hDistanceWhisperLabel) ShowWindow(hDistanceWhisperLabel, SW_HIDE);
-        if (hDistanceNormalLabel) ShowWindow(hDistanceNormalLabel, SW_HIDE);
-        if (hDistanceShoutLabel) ShowWindow(hDistanceShoutLabel, SW_HIDE);
-        if (hWhisperKeyEdit) ShowWindow(hWhisperKeyEdit, SW_HIDE);
-        if (hWhisperButton) ShowWindow(hWhisperButton, SW_HIDE);
-        if (hNormalKeyEdit) ShowWindow(hNormalKeyEdit, SW_HIDE);
-        if (hNormalButton) ShowWindow(hNormalButton, SW_HIDE);
-        if (hShoutKeyEdit) ShowWindow(hShoutKeyEdit, SW_HIDE);
-        if (hShoutButton) ShowWindow(hShoutButton, SW_HIDE);
-        if (hConfigKeyEdit) ShowWindow(hConfigKeyEdit, SW_HIDE);
-        if (hConfigButton) ShowWindow(hConfigButton, SW_HIDE);
-        if (hEnableDistanceMutingCheck) ShowWindow(hEnableDistanceMutingCheck, SW_HIDE);
-        if (hEnableAutomaticChannelChangeCheck) ShowWindow(hEnableAutomaticChannelChangeCheck, SW_HIDE);
-        if (hDistanceWhisperEdit) ShowWindow(hDistanceWhisperEdit, SW_HIDE);
-        if (hDistanceNormalEdit) ShowWindow(hDistanceNormalEdit, SW_HIDE);
-        if (hDistanceShoutEdit) ShowWindow(hDistanceShoutEdit, SW_HIDE);
-        if (hDistanceLimitMessage) ShowWindow(hDistanceLimitMessage, SW_HIDE);
-        if (hEnableVoiceToggleCheck) ShowWindow(hEnableVoiceToggleCheck, SW_HIDE);
-        if (hVoiceToggleKeyEdit) ShowWindow(hVoiceToggleKeyEdit, SW_HIDE);
-        if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_HIDE);
-        if (hToggleLabel) ShowWindow(hToggleLabel, SW_HIDE);
-    }
-    else if (category == 2) { // Advanced Options
-        if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
-        if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
-        if (hExplanation3) ShowWindow(hExplanation3, SW_HIDE);
-        if (hPathLabel) ShowWindow(hPathLabel, SW_HIDE);
-        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_HIDE);
-        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_HIDE);
-        if (hPluginLabel) ShowWindow(hPluginLabel, SW_SHOW);
-        if (hKeyLabel) ShowWindow(hKeyLabel, SW_SHOW);
-        if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_SHOW);
-        if (hNormalLabel) ShowWindow(hNormalLabel, SW_SHOW);
-        if (hShoutLabel) ShowWindow(hShoutLabel, SW_SHOW);
-        if (hConfigLabel) ShowWindow(hConfigLabel, SW_SHOW);
-        if (hConfigExplain) ShowWindow(hConfigExplain, SW_SHOW);
-        if (hDistanceLabel) ShowWindow(hDistanceLabel, SW_SHOW);
-        if (hDistanceWhisperLabel) ShowWindow(hDistanceWhisperLabel, SW_SHOW);
-        if (hDistanceNormalLabel) ShowWindow(hDistanceNormalLabel, SW_SHOW);
-        if (hDistanceShoutLabel) ShowWindow(hDistanceShoutLabel, SW_SHOW);
-        if (hWhisperKeyEdit) ShowWindow(hWhisperKeyEdit, SW_SHOW);
-        if (hWhisperButton) ShowWindow(hWhisperButton, SW_SHOW);
-        if (hNormalKeyEdit) ShowWindow(hNormalKeyEdit, SW_SHOW);
-        if (hNormalButton) ShowWindow(hNormalButton, SW_SHOW);
-        if (hShoutKeyEdit) ShowWindow(hShoutKeyEdit, SW_SHOW);
-        if (hShoutButton) ShowWindow(hShoutButton, SW_SHOW);
-        if (hConfigKeyEdit) ShowWindow(hConfigKeyEdit, SW_SHOW);
-        if (hConfigButton) ShowWindow(hConfigButton, SW_SHOW);
-        if (hEnableDistanceMutingCheck) ShowWindow(hEnableDistanceMutingCheck, SW_SHOW);
-        if (hEnableAutomaticChannelChangeCheck) ShowWindow(hEnableAutomaticChannelChangeCheck, SW_SHOW);
-        if (hDistanceWhisperEdit) ShowWindow(hDistanceWhisperEdit, SW_SHOW);
-        if (hDistanceNormalEdit) ShowWindow(hDistanceNormalEdit, SW_SHOW);
-        if (hDistanceShoutEdit) ShowWindow(hDistanceShoutEdit, SW_SHOW);
-        if (hDistanceLimitMessage) ShowWindow(hDistanceLimitMessage, SW_SHOW);
-        if (hEnableVoiceToggleCheck) ShowWindow(hEnableVoiceToggleCheck, SW_SHOW);
-        if (hVoiceToggleKeyEdit) ShowWindow(hVoiceToggleKeyEdit, SW_SHOW);
-        if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_SHOW);
-        if (hToggleLabel) ShowWindow(hToggleLabel, SW_SHOW);
-        updateDistanceLimitMessage();
-    }
-
-    if (hCategoryPatch && hCategoryAdvanced) {
-        SendMessage(hCategoryPatch, BM_SETSTATE, (category == 1) ? TRUE : FALSE, 0);
-        SendMessage(hCategoryAdvanced, BM_SETSTATE, (category == 2) ? TRUE : FALSE, 0);
-    }
-}
-
-// Check if Saved folder exists in game folder | Vérifie que le dossier Saved existe dans le dossier du jeu
-int savedExistsInFolder(const wchar_t* folderPath) {
-    wchar_t savedPath[MAX_PATH];
-    swprintf(savedPath, MAX_PATH, L"%s\\ConanSandbox\\Saved", folderPath);
-    DWORD attribs = GetFileAttributesW(savedPath);
-    return (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY));
-}
-
-// NOUVEAU: Fonction pour sauvegarder les changements de distance/mode
-static void saveVoiceSettings() {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) return;
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    // Lire le fichier existant
-    wchar_t lines[100][1024];
-    int lineCount = 0;
-    BOOL foundWhisper = FALSE, foundNormal = FALSE, foundShout = FALSE;
-
-    FILE* f = NULL;
-    errno_t err = _wfopen_s(&f, configFile, L"r");
-    if (err == 0 && f) {
-        while (fgetws(lines[lineCount], 1024, f) && lineCount < 99) {
-            // Vérifier si cette ligne contient une distance
-            if (wcsncmp(lines[lineCount], L"DistanceWhisper=", 16) == 0) {
-                swprintf(lines[lineCount], 1024, L"DistanceWhisper=%.1f\n", distanceWhisper);
-                foundWhisper = TRUE;
-            }
-            else if (wcsncmp(lines[lineCount], L"DistanceNormal=", 15) == 0) {
-                swprintf(lines[lineCount], 1024, L"DistanceNormal=%.1f\n", distanceNormal);
-                foundNormal = TRUE;
-            }
-            else if (wcsncmp(lines[lineCount], L"DistanceShout=", 14) == 0) {
-                swprintf(lines[lineCount], 1024, L"DistanceShout=%.1f\n", distanceShout);
-                foundShout = TRUE;
-            }
-            lineCount++;
-        }
-        fclose(f);
-    }
-
-    // Ajouter les lignes manquantes
-    if (!foundWhisper && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"DistanceWhisper=%.1f\n", distanceWhisper);
-    }
-    if (!foundNormal && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"DistanceNormal=%.1f\n", distanceNormal);
-    }
-    if (!foundShout && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"DistanceShout=%.1f\n", distanceShout);
-    }
-
-    // Réécrire le fichier - CORRIGÉ: Utilisation de _wfopen_s
-    f = NULL;
-    err = _wfopen_s(&f, configFile, L"w");
-    if (err == 0 && f) {
-        for (int i = 0; i < lineCount; i++) {
-            fwprintf(f, L"%s", lines[i]);
-        }
-        fclose(f);
-    }
-}
-
-// Write full Saved path to config file | Écriture du chemin complet Saved dans le fichier de configuration
-void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhisper, const wchar_t* distNormal, const wchar_t* distShout) {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) {
-        return;
-    }
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    FILE* file = _wfopen(configFile, L"w");
-    if (!file) {
-        return;
-    }
-
-    wchar_t savedPathFull[MAX_PATH];
-    swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
-
-    // NOUVEAU: Mettre à jour les variables globales avec les nouvelles valeurs AVANT validation
-    distanceWhisper = (float)_wtof(distWhisper);
-    distanceNormal = (float)_wtof(distNormal);
-    distanceShout = (float)_wtof(distShout);
-
-    // NOUVEAU: Appliquer les limites maximales
-    applyMaximumDistanceLimits();
-
-    // NOUVEAU: Utiliser les valeurs limitées pour l'écriture du fichier
-    wchar_t limitedWhisper[32], limitedNormal[32], limitedShout[32];
-    swprintf(limitedWhisper, 32, L"%.1f", distanceWhisper);
-    swprintf(limitedNormal, 32, L"%.1f", distanceNormal);
-    swprintf(limitedShout, 32, L"%.1f", distanceShout);
-
-    fwprintf(file, L"SavedPath=%s\n", savedPathFull);
-    fwprintf(file, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-    fwprintf(file, L"EnableMemoryOffsets=%s\n", enableMemoryOffsets ? L"true" : L"false");
-    fwprintf(file, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
-    fwprintf(file, L"WhisperKey=%d\n", whisperKey);
-    fwprintf(file, L"NormalKey=%d\n", normalKey);
-    fwprintf(file, L"ShoutKey=%d\n", shoutKey);
-    fwprintf(file, L"ConfigUIKey=%d\n", configUIKey);
-    fwprintf(file, L"DistanceWhisper=%s\n", limitedWhisper);
-    fwprintf(file, L"DistanceNormal=%s\n", limitedNormal);
-    fwprintf(file, L"DistanceShout=%s\n", limitedShout);
-    fwprintf(file, L"VoiceToggleKey=%d\n", voiceToggleKey);
-    fwprintf(file, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
-    fclose(file);
-
-    // Mettre à jour localVoiceData.voiceDistance
-    localVoiceData.voiceDistance = getVoiceDistanceForMode(localVoiceData.voiceMode);
-
-    // Update modFilePath
-    size_t converted = 0;
-    char modFilePathTemp[MAX_PATH] = "";
-    wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
-    snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
-
-    // Reinstall keyboard hook with new config UI key
-    removeKeyMonitoring();
-    installKeyMonitoring();
-
-    // NOUVEAU: Afficher le message dynamique sur les limites
-    showDynamicDistanceLimitMessage();
-}
-
-// Modern folder browser (IFileDialog) | Explorateur de dossier moderne (IFileDialog)
-void browseFolderModern(HWND hwnd) {
+// Modern folder browser | Explorateur de dossier moderne
+static void browseFolderModern(HWND hwnd) {
     IFileDialog* pfd = NULL;
     HRESULT hr = CoCreateInstance(&CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, &IID_IFileDialog, (void**)&pfd);
     if (SUCCEEDED(hr)) {
@@ -1802,7 +3480,7 @@ void browseFolderModern(HWND hwnd) {
                 wchar_t* path = NULL;
                 hr = psi->lpVtbl->GetDisplayName(psi, SIGDN_FILESYSPATH, &path);
                 if (SUCCEEDED(hr) && path) {
-                    SetWindowTextW(hSavedPathEdit, path); // CHANGÉ: hEdit → hSavedPathEdit
+                    SetWindowTextW(hSavedPathEdit, path);
                     CoTaskMemFree(path);
                 }
                 psi->lpVtbl->Release(psi);
@@ -1812,10 +3490,37 @@ void browseFolderModern(HWND hwnd) {
     }
 }
 
-// Apply font to control | Application de la police à un contrôle
-void ApplyFontToControl(HWND control, HFONT font) {
-    if (font && control) {
-        SendMessageW(control, WM_SETFONT, (WPARAM)font, TRUE);
+// Check if Saved folder exists in game folder | Vérifier que le dossier Saved existe dans le dossier du jeu
+static int savedExistsInFolder(const wchar_t* folderPath) {
+    wchar_t savedPath[MAX_PATH];
+    swprintf(savedPath, MAX_PATH, L"%s\\ConanSandbox\\Saved", folderPath);
+    DWORD attribs = GetFileAttributesW(savedPath);
+    return (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+// Key capture processing | Traitement de la capture de touches
+static void processKeyCapture() {
+    if (!isCapturingKey) return;
+
+    for (int vk = 1; vk < 256; vk++) {
+        if (vk == 27) continue;
+        if (GetAsyncKeyState(vk) & 0x8000) {
+            switch (captureKeyTarget) {
+            case 1: whisperKey = vk; if (hWhisperKeyEdit) SetWindowTextA(hWhisperKeyEdit, getKeyName(vk)); break;
+            case 2: normalKey = vk; if (hNormalKeyEdit) SetWindowTextA(hNormalKeyEdit, getKeyName(vk)); break;
+            case 3: shoutKey = vk; if (hShoutKeyEdit) SetWindowTextA(hShoutKeyEdit, getKeyName(vk)); break;
+            case 4: configUIKey = vk; if (hConfigKeyEdit) SetWindowTextA(hConfigKeyEdit, getKeyName(vk)); break;
+            case 5: voiceToggleKey = vk; if (hVoiceToggleKeyEdit) SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(vk)); break;
+            }
+            isCapturingKey = FALSE;
+            captureKeyTarget = 0;
+            if (hWhisperButton) EnableWindow(hWhisperButton, TRUE);
+            if (hNormalButton) EnableWindow(hNormalButton, TRUE);
+            if (hShoutButton) EnableWindow(hShoutButton, TRUE);
+            if (hConfigButton) EnableWindow(hConfigButton, TRUE);
+            Sleep(200);
+            break;
+        }
     }
 }
 
@@ -1842,13 +3547,13 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Emoji");
 
-        // Titre principal
+        // Main title | Titre principal
         control = CreateWindowW(L"STATIC", L"\U0001F3AE Plugin Settings",
             WS_VISIBLE | WS_CHILD | SS_CENTER,
             10, 15, 580, 35, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(control, hFontLarge);
 
-        // Boutons de catégories
+        // Category buttons | Boutons de catégories
         hCategoryPatch = CreateWindowW(L"BUTTON", L"\U0001F4C1 Patch Configuration",
             WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
             80, 65, 200, 40, hwnd, (HMENU)301, NULL, NULL);
@@ -1859,12 +3564,12 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             300, 65, 200, 40, hwnd, (HMENU)302, NULL, NULL);
         ApplyFontToControl(hCategoryAdvanced, hFontBold);
 
-        // Ligne de séparation
+        // Separator line | Ligne de séparation
         control = CreateWindowW(L"STATIC", L"",
             WS_VISIBLE | WS_CHILD | SS_ETCHEDHORZ,
             40, 120, 520, 2, hwnd, NULL, NULL, NULL);
 
-        // CONTENU CATÉGORIE 1: PATCH CONFIGURATION
+        // Category 1 content: Patch Configuration | Contenu catégorie 1: Configuration du patch
         control = CreateWindowW(L"STATIC", infoText1,
             WS_VISIBLE | WS_CHILD,
             40, 140, 520, 25, hwnd, (HMENU)401, NULL, NULL);
@@ -1895,25 +3600,25 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             430, 270, 100, 35, hwnd, (HMENU)105, NULL, NULL);
         ApplyFontToControl(hSavedPathButton, hFont);
 
-        // CONTENU CATÉGORIE 2: ADVANCED OPTIONS (INITIALEMENT MASQUÉ)
+        // Category 2 content: Advanced Options (initially hidden) | Contenu catégorie 2: Options avancées (initialement masqué)
         control = CreateWindowW(L"STATIC", L"\U0001F527 Plugin Features",
             WS_CHILD,
-            40, 140, 250, 25, hwnd, (HMENU)501, NULL, NULL);
+            40, 115, 250, 25, hwnd, (HMENU)501, NULL, NULL);
         ApplyFontToControl(control, hFontBold);
 
         hEnableDistanceMutingCheck = CreateWindowW(L"BUTTON", L"\U0001F4CF Enable distance-based muting",
             WS_CHILD | BS_AUTOCHECKBOX,
-            60, 170, 320, 25, hwnd, (HMENU)201, NULL, NULL);
+            60, 145, 320, 25, hwnd, (HMENU)201, NULL, NULL);
         ApplyFontToControl(hEnableDistanceMutingCheck, hFont);
 
         hEnableAutomaticChannelChangeCheck = CreateWindowW(L"BUTTON", L"\U0001F504 Enable automatic channel switching",
             WS_CHILD | BS_AUTOCHECKBOX,
-            60, 200, 380, 25, hwnd, (HMENU)203, NULL, NULL);
+            60, 165, 380, 25, hwnd, (HMENU)203, NULL, NULL);
         ApplyFontToControl(hEnableAutomaticChannelChangeCheck, hFont);
 
         hEnableVoiceToggleCheck = CreateWindowW(L"BUTTON", L"\U0001F504 Enable voice mode toggle button",
             WS_CHILD | BS_AUTOCHECKBOX,
-            60, 230, 380, 25, hwnd, (HMENU)204, NULL, NULL);
+            60, 185, 380, 25, hwnd, (HMENU)204, NULL, NULL);
         ApplyFontToControl(hEnableVoiceToggleCheck, hFont);
 
         control = CreateWindowW(L"STATIC", L"\u2328\uFE0F Keyboard Shortcuts",
@@ -1986,106 +3691,119 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             60, 445, 400, 25, hwnd, (HMENU)507, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
-        control = CreateWindowW(L"STATIC", L"\U0001F504 Toggle Mode:",
-            WS_CHILD,
-            60, 480, 130, 25, hwnd, (HMENU)513, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hVoiceToggleKeyEdit = CreateWindowW(L"EDIT", L"",
-            WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 478, 110, 30, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hVoiceToggleKeyEdit, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F4A1 Press the assigned key in-game to open this panel",
-            WS_CHILD,
-            60, 445, 400, 25, hwnd, (HMENU)507, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        // NOUVEAU: Titre pour la section Toggle Mode
+        // Voice toggle settings section | Section des paramètres de basculement vocal
         control = CreateWindowW(L"STATIC", L"\U0001F504 Voice Toggle Settings",
             WS_CHILD,
-            40, 470, 250, 25, hwnd, (HMENU)514, NULL, NULL);
+            40, 480, 250, 25, hwnd, (HMENU)514, NULL, NULL);
         ApplyFontToControl(control, hFontBold);
 
         control = CreateWindowW(L"STATIC", L"\U0001F504 Toggle Mode:",
             WS_CHILD,
-            60, 500, 130, 25, hwnd, (HMENU)513, NULL, NULL);
+            60, 510, 130, 25, hwnd, (HMENU)513, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
         hVoiceToggleKeyEdit = CreateWindowW(L"EDIT", L"",
             WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 498, 110, 30, hwnd, NULL, NULL, NULL);
+            200, 508, 110, 30, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(hVoiceToggleKeyEdit, hFont);
 
         hVoiceToggleButton = CreateWindowW(L"BUTTON", L"\u270F\uFE0F Set Key",
             WS_CHILD,
-            320, 478, 90, 30, hwnd, (HMENU)106, NULL, NULL);
+            320, 508, 90, 30, hwnd, (HMENU)106, NULL, NULL);
         ApplyFontToControl(hVoiceToggleButton, hFont);
 
         control = CreateWindowW(L"STATIC", L"\U0001F4CF Voice Range Settings (meters)",
             WS_CHILD,
-            40, 540, 350, 25, hwnd, (HMENU)508, NULL, NULL);
+            40, 550, 350, 25, hwnd, (HMENU)508, NULL, NULL);
         ApplyFontToControl(control, hFontBold);
 
         control = CreateWindowW(L"STATIC", L"\U0001F92B Whisper:",
             WS_CHILD,
-            60, 575, 90, 25, hwnd, (HMENU)509, NULL, NULL);
+            60, 585, 90, 25, hwnd, (HMENU)509, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
         hDistanceWhisperEdit = CreateWindowW(L"EDIT", L"2.0",
             WS_CHILD | WS_BORDER | ES_CENTER,
-            155, 573, 60, 28, hwnd, NULL, NULL, NULL);
+            155, 583, 60, 28, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(hDistanceWhisperEdit, hFont);
 
         control = CreateWindowW(L"STATIC", L"\U0001F4AC Normal:",
             WS_CHILD,
-            230, 575, 80, 25, hwnd, (HMENU)510, NULL, NULL);
+            230, 585, 80, 25, hwnd, (HMENU)510, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
         hDistanceNormalEdit = CreateWindowW(L"EDIT", L"10.0",
             WS_CHILD | WS_BORDER | ES_CENTER,
-            315, 573, 60, 28, hwnd, NULL, NULL, NULL);
+            315, 583, 60, 28, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(hDistanceNormalEdit, hFont);
 
         control = CreateWindowW(L"STATIC", L"\U0001F4E2 Shout:",
             WS_CHILD,
-            390, 575, 70, 25, hwnd, (HMENU)511, NULL, NULL);
+            390, 585, 70, 25, hwnd, (HMENU)511, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
         hDistanceShoutEdit = CreateWindowW(L"EDIT", L"15.0",
             WS_CHILD | WS_BORDER | ES_CENTER,
-            465, 573, 60, 28, hwnd, NULL, NULL, NULL);
+            465, 583, 60, 28, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(hDistanceShoutEdit, hFont);
 
-        // NOUVEAU: Message des limites de distance
-        hDistanceLimitMessage = CreateWindowW(L"STATIC", L"Maximum distance limit: 30 meters (set by Mumble's Maximum Distance setting)",
-            WS_CHILD | SS_CENTER,
-            40, 610, 520, 20, hwnd, (HMENU)512, NULL, NULL);
-        ApplyFontToControl(hDistanceLimitMessage, hFont);
+        // CORRECTION: Créer les messages CACHÉS par défaut avec WS_CHILD SEULEMENT (pas WS_VISIBLE)
+        hDistanceWhisperMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
+            60, 615, 480, 20, hwnd, (HMENU)520, NULL, NULL);
+        ApplyFontToControl(hDistanceWhisperMessage, hFont);
 
-        // Boutons principaux - AJUSTÉS
-        control = CreateWindowW(L"BUTTON", L"\u2705 Save Configuration",
+        hDistanceNormalMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
+            60, 635, 480, 20, hwnd, (HMENU)521, NULL, NULL);
+        ApplyFontToControl(hDistanceNormalMessage, hFont);
+
+        hDistanceShoutMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
+            60, 655, 480, 20, hwnd, (HMENU)522, NULL, NULL);
+        ApplyFontToControl(hDistanceShoutMessage, hFont);
+
+        // CORRECTION: Distance-based muting message - CACHÉ par défaut
+        hDistanceMutingMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
+            60, 210, 460, 18, hwnd, (HMENU)523, NULL, NULL);
+        ApplyFontToControl(hDistanceMutingMessage, hFont);
+
+        // CORRECTION: Automatic channel switching message - CACHÉ par défaut
+        hChannelSwitchingMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
+            60, 230, 460, 18, hwnd, (HMENU)524, NULL, NULL);
+        ApplyFontToControl(hChannelSwitchingMessage, hFont);
+
+        // CORRECTION: Positional audio message - CACHÉ par défaut
+        hPositionalAudioMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
+            60, 250, 460, 18, hwnd, (HMENU)525, NULL, NULL);
+        ApplyFontToControl(hPositionalAudioMessage, hFont);
+
+        // Main buttons | Boutons principaux
+        control = CreateWindowW(L"BUTTON", L"Save Configuration",
             WS_VISIBLE | WS_CHILD,
-            140, 640, 160, 40, hwnd, (HMENU)1, NULL, NULL);
+            140, 690, 160, 40, hwnd, (HMENU)1, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
-        control = CreateWindowW(L"BUTTON", L"\u274C Cancel",
+        control = CreateWindowW(L"BUTTON", L"Cancel",
             WS_VISIBLE | WS_CHILD,
-            320, 640, 120, 40, hwnd, (HMENU)2, NULL, NULL);
+            320, 690, 120, 40, hwnd, (HMENU)2, NULL, NULL);
         ApplyFontToControl(control, hFont);
 
-        // NOUVEAU: Zone d'affichage des messages de statut | NEW: Status message display area
+        // Status message display area | Zone d'affichage des messages de statut
         hStatusMessage = CreateWindowW(L"STATIC", L"",
             WS_VISIBLE | WS_CHILD | SS_CENTER,
-            40, 690, 520, 25, hwnd, (HMENU)600, NULL, NULL);
+            40, 740, 520, 25, hwnd, (HMENU)600, NULL, NULL);
         ApplyFontToControl(hStatusMessage, hFont);
 
         loadVoiceDistancesFromConfig();
 
-        // Charger les valeurs ACTUELLES depuis la configuration
+        // Load current values from configuration | Charger les valeurs actuelles depuis la configuration
         wchar_t gamePathFromConfig[MAX_PATH] = L"";
 
-        // Lire le chemin depuis le fichier de config
+        // Read path from config file | Lire le chemin depuis le fichier de config
         wchar_t* configFolder = getConfigFolderPath();
         if (configFolder) {
             wchar_t configFile[MAX_PATH];
@@ -2102,11 +3820,11 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                         wchar_t* cr = wcschr(pathStart, L'\r');
                         if (cr) *cr = L'\0';
 
-                        // Extract parent directory (remove \ConanSandbox\Saved) | Extraire le répertoire parent
+                        // Extract parent directory | Extraire le répertoire parent
                         wcscpy_s(gamePathFromConfig, MAX_PATH, pathStart);
                         wchar_t* conanSandbox = wcsstr(gamePathFromConfig, L"\\ConanSandbox\\Saved");
                         if (conanSandbox) {
-                            *conanSandbox = L'\0'; // Truncate at \ConanSandbox\Saved
+                            *conanSandbox = L'\0';
                         }
                         break;
                     }
@@ -2122,7 +3840,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
         }
 
-        // Set the actual values | Définir les valeurs réelles
+        // Set actual values | Définir les valeurs réelles
         if (wcslen(gamePathFromConfig) > 0) {
             SetWindowTextW(hSavedPathEdit, gamePathFromConfig);
         }
@@ -2139,7 +3857,8 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         CheckDlgButton(hwnd, 203, enableAutomaticChannelChange ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hwnd, 204, enableVoiceToggle ? BST_CHECKED : BST_UNCHECKED);
 
-        // NOUVEAU: Définir les valeurs de distance actuelles dans les champs
+        // CORRECTION: Utiliser les valeurs CHARGÉES depuis le fichier de configuration
+        // au lieu des valeurs par défaut
         wchar_t whisperText[32], normalText[32], shoutText[32];
         swprintf(whisperText, 32, L"%.1f", distanceWhisper);
         swprintf(normalText, 32, L"%.1f", distanceNormal);
@@ -2149,9 +3868,14 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         SetWindowTextW(hDistanceNormalEdit, normalText);
         SetWindowTextW(hDistanceShoutEdit, shoutText);
 
-        updateDistanceLimitMessage();
+        if (enableLogConfig) {
+            char debugMsg[256];
+            snprintf(debugMsg, sizeof(debugMsg),
+                "WM_CREATE: Distances set in fields - Whisper: %.1f, Normal: %.1f, Shout: %.1f",
+                distanceWhisper, distanceNormal, distanceShout);
+            mumbleAPI.log(ownID, debugMsg);
+        }
 
-        ShowCategoryControls(1);
         break;
 
     case WM_CTLCOLORSTATIC: {
@@ -2159,24 +3883,46 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         HWND hwndStatic = (HWND)lParam;
         int controlId = GetDlgCtrlID(hwndStatic);
 
-        if (controlId == 512) { // Message des limites de distance
-            SetTextColor(hdcStatic, RGB(100, 100, 100)); // Gris discret
+        // Colors for consolidated messages | Couleurs pour les messages consolidés
+        if (controlId >= 520 && controlId <= 528) {
+            wchar_t messageText[300];
+            GetWindowTextW(hwndStatic, messageText, 300);
+
+            if (wcsstr(messageText, L"📋") && wcsstr(messageText, L"None")) {
+                SetTextColor(hdcStatic, RGB(59, 130, 246));
+            }
+            else if (wcsstr(messageText, L"📋") && wcsstr(messageText, L"Enforced")) {
+                SetTextColor(hdcStatic, RGB(251, 146, 60));
+            }
+            else if (wcsstr(messageText, L"🔴") || wcsstr(messageText, L"Auto-corrected")) {
+                SetTextColor(hdcStatic, RGB(220, 38, 38));
+            }
+            else if (wcsstr(messageText, L"🟢") || wcsstr(messageText, L"Valid range") || wcsstr(messageText, L"Free range")) {
+                SetTextColor(hdcStatic, RGB(34, 197, 94));
+            }
+            else if (wcsstr(messageText, L"LOCKED") || wcsstr(messageText, L"FORCED")) {
+                SetTextColor(hdcStatic, RGB(251, 146, 60));
+            }
+            else if (wcsstr(messageText, L"INFO")) {
+                SetTextColor(hdcStatic, RGB(59, 130, 246));
+            }
+            else {
+                SetTextColor(hdcStatic, RGB(107, 114, 128));
+            }
         }
-        else if (controlId == 600) { // Message de statut
+
+        else if (controlId == 600) {
             wchar_t messageText[256];
             GetWindowTextW(hwndStatic, messageText, 256);
 
-            // Détecter le type de message par son contenu | Detect message type by content
+            // Detect message type by content | Détecter le type de message par son contenu
             if (wcsstr(messageText, L"\u26A0") || wcsstr(messageText, L"Error") || wcsstr(messageText, L"does not exist")) {
-                // Message d'erreur - rouge | Error message - red
                 SetTextColor(hdcStatic, RGB(220, 53, 69));
             }
             else if (wcsstr(messageText, L"\u2705") || wcsstr(messageText, L"\u2699") || wcsstr(messageText, L"success")) {
-                // Message de succès - vert | Success message - green
                 SetTextColor(hdcStatic, RGB(40, 167, 69));
             }
             else {
-                // Message normal - gris | Normal message - gray
                 SetTextColor(hdcStatic, RGB(108, 117, 125));
             }
         }
@@ -2198,7 +3944,10 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case 301: ShowCategoryControls(1); break;
-        case 302: ShowCategoryControls(2); break;
+        case 302:
+            ShowCategoryControls(2);
+            updateConsolidatedDistanceMessages();
+            break;
         case 105: browseSavedPath(hwnd); break;
 
         case 101:
@@ -2230,8 +3979,35 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             EnableWindow(hShoutButton, FALSE); EnableWindow(hConfigButton, FALSE);
             EnableWindow(hVoiceToggleButton, FALSE);
             SetWindowTextA(hVoiceToggleKeyEdit, "Press key..."); break;
+        case 201:
+            if (HIWORD(wParam) == BN_CLICKED) {
+                if (hubForceDistanceBasedMuting) {
+                    // Prevent unchecking if forced by server | Empêcher de décocher si forcé par le serveur
+                    CheckDlgButton(hwnd, 201, BST_CHECKED);
+                    showStatusMessage(L"🔒 Cannot disable distance-based muting: This setting is enforced by the server", TRUE);
+                    MessageBeep(MB_ICONWARNING);
+                }
+                else {
+                    enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+                    updateDynamicInterface();
+                }
+            }
+            break;
+        case 203:
+            if (HIWORD(wParam) == BN_CLICKED) {
+                if (hubForceAutomaticChannelSwitching) {
+                    CheckDlgButton(hwnd, 203, BST_CHECKED);
+                    showStatusMessage(L"Cannot disable automatic channel switching: This setting is enforced by the server", TRUE);
+                    MessageBeep(MB_ICONWARNING);
+                }
+                else {
+                    enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+                    updateDynamicInterface();
+                }
+            }
+            break;
 
-        case 1: { // Sauvegarder
+        case 1: {
             wchar_t gameFolder[MAX_PATH];
             GetWindowTextW(hSavedPathEdit, gameFolder, MAX_PATH);
 
@@ -2240,24 +4016,30 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 break;
             }
 
-            // Vérifier si la configuration était déjà sauvée AVANT la sauvegarde
-            BOOL wasAlreadySaved = isPatchAlreadySaved();
+            // Display save message immediately | Afficher immédiatement le message de sauvegarde
+            showStatusMessage(L"⏳ Saving configuration...", FALSE);
 
+            // Force interface redraw | Forcer le redessin de l'interface
+            UpdateWindow(hwnd);
+
+            // Apply values immediately | Appliquer immédiatement les valeurs
             enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
             enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
             enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
 
+            // Get values | Récupérer les valeurs
             wchar_t distWhisper[32], distNormal[32], distShout[32];
             GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
             GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
             GetWindowTextW(hDistanceShoutEdit, distShout, 32);
 
+            // Check if already saved before saving | Vérifier si c'était déjà sauvé AVANT la sauvegarde
+            BOOL wasAlreadySaved = isPatchAlreadySaved();
+
+            // Perform save | Effectuer la sauvegarde
             writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
-            // NOUVEAU: Appeler saveVoiceSettings pour s'assurer que les distances sont correctement sauvées
-            saveVoiceSettings();
-
-            // Afficher le message seulement si ce n'était pas déjà sauvé
+            // Success message | Message de succès
             if (!wasAlreadySaved) {
                 showStatusMessage(L"\u2705 Configuration saved successfully!", FALSE);
             }
@@ -2268,19 +4050,36 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         }
 
         case 2: DestroyWindow(hwnd); break;
+
+            // Handle distance field changes | Gestion des changements dans les champs de distance
+        default:
+            if (HIWORD(wParam) == EN_CHANGE) {
+                HWND hEditControl = (HWND)lParam;
+                if (hEditControl == hDistanceWhisperEdit) {
+                    handleDistanceEditChange(1);
+                }
+                else if (hEditControl == hDistanceNormalEdit) {
+                    handleDistanceEditChange(2);
+                }
+                else if (hEditControl == hDistanceShoutEdit) {
+                    handleDistanceEditChange(3);
+                }
+            }
+            break;
         }
         break;
 
     case WM_TIMER:
         if (wParam == 1) {
-            // Timer pour capture des touches | Timer for key capture
+            // Timer for key capture | Timer pour capture des touches
             processKeyCapture();
         }
         else if (wParam == 2) {
-            // Timer pour effacer le message de statut | Timer to clear status message
+            // Timer to clear status message | Timer pour effacer le message de statut
             clearStatusMessage();
             KillTimer(hwnd, 2);
         }
+
         break;
 
     case WM_DESTROY:
@@ -2298,39 +4097,142 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     return 0;
 }
 
-// Check if patch is already saved in config file | Vérifie si le patch est déjà enregistré dans le fichier de configuration
-int isPatchAlreadySaved() {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) {
-        return 0;
+// Show configuration interface centered on screen | Afficher l'interface de configuration centrée à l'écran
+static int showConfigInterface() {
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: Function started");
     }
 
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+    readConfigurationSettings();
+    retrieveServerMaximumAudioDistance(TRUE);
 
-    FILE* file = _wfopen(configFile, L"r");
-    if (!file) {
-        return 0;
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: Configuration settings read");
     }
-    wchar_t line[512];
-    int found = 0;
-    while (fgetws(line, 512, file)) {
-        if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-            // Check if there's something after 'SavedPath=' | Vérifie qu'il y a quelque chose après 'SavedPath='
-            wchar_t* value = line + 10;
-            // Ignore spaces and line breaks | Ignore les espaces et les retours à la ligne
-            while (*value == L' ' || *value == L'\t') value++;
-            if (*value != L'\0' && *value != L'\n' && *value != L'\r') {
-                found = 1;
-                break;
-            }
+
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(hr)) {
+        if (enableLogGeneral) {
+            char errorMsg[128];
+            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: COM initialization failed with HRESULT: 0x%08X", hr);
+            mumbleAPI.log(ownID, errorMsg);
         }
+        MessageBoxW(NULL, L"Failed to initialize COM", L"Error", MB_OK | MB_ICONERROR);
+        isConfigDialogOpen = FALSE;
+        return -1;
     }
-    fclose(file);
-    return found;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: COM initialized successfully");
+    }
+
+    const wchar_t CONFIG_CLASS_NAME[] = L"ModernConfigClass";
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = ConfigDialogProc;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.lpszClassName = CONFIG_CLASS_NAME;
+    wc.hbrBackground = CreateSolidBrush(RGB(248, 249, 250));
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+
+    UnregisterClassW(CONFIG_CLASS_NAME, wc.hInstance);
+
+    ATOM classAtom = RegisterClassW(&wc);
+    if (classAtom == 0) {
+        DWORD error = GetLastError();
+        if (enableLogGeneral) {
+            char errorMsg[128];
+            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: RegisterClassW failed with error: %lu", error);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+        CoUninitialize();
+        isConfigDialogOpen = FALSE;
+        return -1;
+    }
+
+    // Get screen dimensions without affecting mouse | Obtenir les dimensions de l'écran sans affecter la souris
+    RECT desktopRect;
+    GetWindowRect(GetDesktopWindow(), &desktopRect);
+
+    int windowWidth = 600;
+    int windowHeight = 780;
+
+    // Center on main screen | Centrer sur l'écran principal
+    int windowX = (desktopRect.right - desktopRect.left - windowWidth) / 2;
+    int windowY = (desktopRect.bottom - desktopRect.top - windowHeight) / 2;
+
+    if (windowX < 10) windowX = 10;
+    if (windowY < 10) windowY = 10;
+
+    if (enableLogGeneral) {
+        char posMsg[256];
+        snprintf(posMsg, sizeof(posMsg), "showConfigInterface: Positioning window at screen center - Window: (%d,%d)",
+            windowX, windowY);
+        mumbleAPI.log(ownID, posMsg);
+    }
+
+    hConfigDialog = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        CONFIG_CLASS_NAME,
+        L"\U0001F3AE Plugin Settings",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        windowX, windowY, windowWidth, windowHeight,
+        NULL, NULL, wc.hInstance, NULL);
+
+    if (!hConfigDialog) {
+        DWORD error = GetLastError();
+        if (enableLogGeneral) {
+            char errorMsg[128];
+            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: CreateWindowExW failed with error: %lu", error);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+        CoUninitialize();
+        isConfigDialogOpen = FALSE;
+        return -1;
+    }
+
+    if (enableLogGeneral) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "showConfigInterface: Window created successfully, hWnd = 0x%p", hConfigDialog);
+        mumbleAPI.log(ownID, msg);
+    }
+
+    SetLayeredWindowAttributes(hConfigDialog, 0, 250, LWA_ALPHA);
+
+    // Force window to foreground without affecting mouse | Forcer la fenêtre au premier plan sans affecter la souris
+    forceWindowToForegroundNoMouse(hConfigDialog);
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: Window positioned at screen center and forced to foreground");
+    }
+
+    SetTimer(hConfigDialog, 1, 50, NULL);
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: Timer set, entering message loop");
+    }
+
+    MSG msg = { 0 };
+    while (GetMessageW(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: Message loop exited");
+    }
+
+    CoUninitialize();
+    isConfigDialogOpen = FALSE;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "showConfigInterface: Function completed successfully");
+    }
+
+    return 0;
 }
 
-// Path selection dialog thread function | Fonction de thread pour la boîte de dialogue de sélection de chemin
+// Path selection dialog thread | Thread pour la boîte de dialogue de sélection de chemin
 void showPathSelectionDialogThread(void* arg) {
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "showPathSelectionDialogThread: Thread started");
@@ -2345,21 +4247,745 @@ void showPathSelectionDialogThread(void* arg) {
     }
 }
 
-// Check if mod file is active (updated in last 5 seconds) | Vérifie si le fichier mod est actif (mis à jour dans les 5 dernières secondes)
+
+// ============================================================================
+// MODULE 15 : INTERFACE - MESSAGES
+// ============================================================================
+
+// Update distance message in real time | Fonction pour mettre à jour les messages de distance en temps réel
+static void updateDistanceMessage(HWND hMessageControl, float currentValue, float minimum, float maximum, const char* modeName) {
+    if (!hMessageControl || !IsWindow(hMessageControl)) return;
+
+    SetWindowTextW(hMessageControl, L"");
+    InvalidateRect(hMessageControl, NULL, TRUE);
+
+    wchar_t message[256] = L"";
+
+    if (!shouldApplyDistanceLimits()) {
+        swprintf(message, 256, L"INFO: %S distance: %.1f (No server limits - free range)", modeName, currentValue);
+    }
+    else if (currentValue < minimum) {
+        swprintf(message, 256, L"WARNING: %S: %.1f too low (min: %.1f) - auto-corrected", modeName, currentValue, minimum);
+    }
+    else if (currentValue > maximum) {
+        swprintf(message, 256, L"WARNING: %S: %.1f too high (max: %.1f) - auto-corrected", modeName, currentValue, maximum);
+    }
+
+    SetWindowTextW(hMessageControl, message);
+    ShowWindow(hMessageControl, SW_SHOW);
+    UpdateWindow(hMessageControl);
+}
+
+// Update distance muting message | Fonction pour mettre à jour le message de muting
+static void updateDistanceMutingMessage() {
+    if (!hDistanceMutingMessage || !IsWindow(hDistanceMutingMessage)) return;
+
+    SetWindowTextW(hDistanceMutingMessage, L"");
+
+    wchar_t message[256] = L"";
+
+    if (!shouldApplyDistanceLimits()) {
+        if (enableDistanceMuting) {
+            swprintf(message, 256, L"INFO: Distance-based muting: Enabled (No server restrictions)");
+        }
+        else {
+            swprintf(message, 256, L"INFO: Distance-based muting: Disabled (No server restrictions)");
+        }
+    }
+    else if (hubForceDistanceBasedMuting) {
+        if (enableDistanceMuting) {
+            swprintf(message, 256, L"LOCKED: Distance-based muting: FORCED by server (cannot disable)");
+        }
+        else {
+            swprintf(message, 256, L"LOCKED: Distance-based muting: FORCED by server - enabling automatically");
+        }
+    }
+    else {
+        if (enableDistanceMuting) {
+            swprintf(message, 256, L"OK: Distance-based muting: Enabled (user choice)");
+        }
+        else {
+            swprintf(message, 256, L"INFO: Distance-based muting: Disabled (user choice)");
+        }
+    }
+
+    InvalidateRect(hDistanceMutingMessage, NULL, TRUE);
+    SetWindowTextW(hDistanceMutingMessage, message);
+    ShowWindow(hDistanceMutingMessage, SW_SHOW);
+    UpdateWindow(hDistanceMutingMessage);
+}
+
+static void updatePositionalAudioMessage() {
+    if (!hPositionalAudioMessage || !IsWindow(hPositionalAudioMessage)) return;
+
+    SetWindowTextW(hPositionalAudioMessage, L"");
+    InvalidateRect(hPositionalAudioMessage, NULL, TRUE);
+
+    wchar_t message[400] = L"";
+
+    if (!shouldApplyDistanceLimits()) {
+        if (enableAutoAudioSettings) {
+            swprintf(message, 400, L"INFO: Positional audio: Enabled (No server restrictions)");
+        }
+        else {
+            swprintf(message, 400, L"INFO: Positional audio: Disabled (No server restrictions)");
+        }
+    }
+    else if (hubForcePositionalAudio) {
+        if (enableAutoAudioSettings) {
+            swprintf(message, 400,
+                L"ACTIVE: Positional audio FORCED - MinDist=%.1f MaxDist=%.1f MaxVol=%.0f%% Bloom=%.1f FilterIntensity=%.2f",
+                hubAudioMinDistance, hubAudioMaxDistance, hubAudioMaxVolume, hubAudioBloom, hubAudioFilterIntensity);
+        }
+        else {
+            swprintf(message, 400, L"LOCKED: Positional audio: FORCED by server - enabling automatically");
+        }
+    }
+    else {
+        if (enableAutoAudioSettings) {
+            swprintf(message, 400,
+                L"OK: Positional audio enabled - MinDist=%.1f MaxDist=%.1f MaxVol=%.0f%% Bloom=%.1f FilterIntensity=%.2f",
+                hubAudioMinDistance, hubAudioMaxDistance, hubAudioMaxVolume, hubAudioBloom, hubAudioFilterIntensity);
+        }
+        else {
+            swprintf(message, 400, L"INFO: Positional audio: Disabled (user choice)");
+        }
+    }
+
+    SetWindowTextW(hPositionalAudioMessage, message);
+    ShowWindow(hPositionalAudioMessage, SW_SHOW);
+    UpdateWindow(hPositionalAudioMessage);
+}
+
+static void updateChannelSwitchingMessage() {
+    if (!hChannelSwitchingMessage || !IsWindow(hChannelSwitchingMessage)) return;
+
+    SetWindowTextW(hChannelSwitchingMessage, L"");
+
+    wchar_t message[256] = L"";
+
+    if (!shouldApplyDistanceLimits()) {
+        if (enableAutomaticChannelChange) {
+            swprintf(message, 256, L"INFO: Automatic channel switching: Enabled (No server restrictions)");
+        }
+        else {
+            swprintf(message, 256, L"INFO: Automatic channel switching: Disabled (No server restrictions)");
+        }
+    }
+    else if (hubForceAutomaticChannelSwitching) {
+        if (enableAutomaticChannelChange) {
+            swprintf(message, 256, L"LOCKED: Automatic channel switching: FORCED by server (cannot disable)");
+        }
+        else {
+            swprintf(message, 256, L"LOCKED: Automatic channel switching: FORCED by server - enabling automatically");
+        }
+    }
+    else {
+        if (enableAutomaticChannelChange) {
+            swprintf(message, 256, L"OK: Automatic channel switching: Enabled (user choice)");
+        }
+        else {
+            swprintf(message, 256, L"INFO: Automatic channel switching: Disabled (user choice)");
+        }
+    }
+
+    InvalidateRect(hChannelSwitchingMessage, NULL, TRUE);
+    SetWindowTextW(hChannelSwitchingMessage, message);
+    ShowWindow(hChannelSwitchingMessage, SW_SHOW);
+    UpdateWindow(hChannelSwitchingMessage);
+}
+
+
+// Create consolidated message for each mode | Fonction pour créer un message consolidé unique pour chaque mode
+static void updateConsolidatedDistanceMessages() {
+    if (isUpdatingInterface) return;
+    if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
+
+    BOOL limitsActive = shouldApplyDistanceLimits();
+
+    // Whisper consolidated message | Message whisper consolidé
+    if (hDistanceWhisperMessage && IsWindow(hDistanceWhisperMessage)) {
+        SetWindowTextW(hDistanceWhisperMessage, L"");
+        InvalidateRect(hDistanceWhisperMessage, NULL, TRUE);
+
+        wchar_t whisperMsg[300] = L"";
+
+        if (!limitsActive) {
+            swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Free range - no server limits)", distanceWhisper);
+        }
+        else {
+            if (distanceWhisper < hubMinimumWhisper) {
+                swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
+                    distanceWhisper, (float)hubMinimumWhisper, (float)hubMinimumWhisper);
+            }
+            else if (distanceWhisper > hubMaximumWhisper) {
+                swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
+                    distanceWhisper, (float)hubMaximumWhisper, (float)hubMaximumWhisper);
+            }
+            else {
+                swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Valid range: %.1f-%.1f)",
+                    distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper);
+            }
+        }
+
+        SetWindowTextW(hDistanceWhisperMessage, whisperMsg);
+        ShowWindow(hDistanceWhisperMessage, SW_SHOW);
+        UpdateWindow(hDistanceWhisperMessage);
+    }
+
+    // Normal consolidated message | Message normal consolidé
+    if (hDistanceNormalMessage && IsWindow(hDistanceNormalMessage)) {
+        SetWindowTextW(hDistanceNormalMessage, L"");
+        InvalidateRect(hDistanceNormalMessage, NULL, TRUE);
+
+        wchar_t normalMsg[300] = L"";
+
+        if (!limitsActive) {
+            swprintf(normalMsg, 300, L" Normal: %.1f meters (Free range - no server limits)", distanceNormal);
+        }
+        else {
+            if (distanceNormal < hubMinimumNormal) {
+                swprintf(normalMsg, 300, L"Normal: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
+                    distanceNormal, (float)hubMinimumNormal, (float)hubMinimumNormal);
+            }
+            else if (distanceNormal > hubMaximumNormal) {
+                swprintf(normalMsg, 300, L"Normal: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
+                    distanceNormal, (float)hubMaximumNormal, (float)hubMaximumNormal);
+            }
+            else {
+                swprintf(normalMsg, 300, L"Normal: %.1f meters (Valid range: %.1f-%.1f)",
+                    distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal);
+            }
+        }
+
+        SetWindowTextW(hDistanceNormalMessage, normalMsg);
+        ShowWindow(hDistanceNormalMessage, SW_SHOW);
+        UpdateWindow(hDistanceNormalMessage);
+    }
+
+    // Shout consolidated message | Message shout consolidé
+    if (hDistanceShoutMessage && IsWindow(hDistanceShoutMessage)) {
+        SetWindowTextW(hDistanceShoutMessage, L"");
+        InvalidateRect(hDistanceShoutMessage, NULL, TRUE);
+
+        wchar_t shoutMsg[300] = L"";
+
+        if (!limitsActive) {
+            swprintf(shoutMsg, 300, L" Shout: %.1f meters (Free range - no server limits)", distanceShout);
+        }
+        else {
+            if (distanceShout < hubMinimumShout) {
+                swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
+                    distanceShout, (float)hubMinimumShout, (float)hubMinimumShout);
+            }
+            else if (distanceShout > hubMaximumShout) {
+                swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
+                    distanceShout, (float)hubMaximumShout, (float)hubMaximumShout);
+            }
+            else {
+                swprintf(shoutMsg, 300, L"Shout: %.1f meters (Valid range: %.1f-%.1f)",
+                    distanceShout, (float)hubMinimumShout, (float)hubMaximumShout);
+            }
+        }
+
+        SetWindowTextW(hDistanceShoutMessage, shoutMsg);
+        ShowWindow(hDistanceShoutMessage, SW_SHOW);
+        UpdateWindow(hDistanceShoutMessage);
+    }
+}
+
+// Display server limits separately | Fonction pour afficher les limites serveur distinctement
+static void updateServerLimitMessages() {
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "DEBUG: updateServerLimitMessages() FUNCTION CALLED SUCCESSFULLY!");
+    }
+
+    if (isUpdatingInterface) return;
+    if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
+
+    BOOL limitsActive = shouldApplyDistanceLimits();
+
+    if (enableLogGeneral) {
+        char debugMsg[128];
+        snprintf(debugMsg, sizeof(debugMsg), "DEBUG: updateServerLimitMessages - limitsActive = %s",
+            limitsActive ? "TRUE" : "FALSE");
+        mumbleAPI.log(ownID, debugMsg);
+    }
+}
+
+// Display status message in interface | Afficher un message de statut dans l'interface
+static void showStatusMessage(const wchar_t* message, BOOL isError) {
+    if (hStatusMessage) {
+        SetWindowTextW(hStatusMessage, message);
+
+        // Change color based on message type | Changer la couleur selon le type de message
+        if (isError) {
+            SendMessage(hStatusMessage, WM_CTLCOLORSTATIC, (WPARAM)GetDC(hStatusMessage), (LPARAM)hStatusMessage);
+        }
+        else {
+            SendMessage(hStatusMessage, WM_CTLCOLORSTATIC, (WPARAM)GetDC(hStatusMessage), (LPARAM)hStatusMessage);
+        }
+
+        SetTimer(hConfigDialog, 2, 5000, NULL);
+    }
+}
+
+// Clear status message | Effacer le message de statut
+static void clearStatusMessage() {
+    if (hStatusMessage) {
+        SetWindowTextW(hStatusMessage, L"");
+    }
+}
+
+// Generate dynamic distance limit message | Générer un message dynamique sur les limites de distance
+static void showDynamicDistanceLimitMessage() {
+    if (!maxAudioDistanceRetrieved) {
+        retrieveServerMaximumAudioDistance(FALSE);
+    }
+
+    char dynamicMsg[1024];
+    snprintf(dynamicMsg, sizeof(dynamicMsg),
+        "Voice distance information:\n"
+        "Server Maximum Audio Distance: %.1f meters\n"
+        "Current Settings:\n"
+        "  • Whisper: %.1f meters %s\n"
+        "  • Normal: %.1f meters %s\n"
+        "  • Shout: %.1f meters %s\n"
+        "Note: Distances are automatically limited by server settings. "
+        "Each server may have different maximum distances.",
+        serverMaximumAudioDistance,
+        distanceWhisper, (distanceWhisper == serverMaximumAudioDistance) ? "(LIMITED)" : "",
+        distanceNormal, (distanceNormal == serverMaximumAudioDistance) ? "(LIMITED)" : "",
+        distanceShout, (distanceShout == serverMaximumAudioDistance) ? "(LIMITED)" : "");
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, dynamicMsg);
+    }
+}
+
+// ============================================================================
+// MODULE 16 : INTERFACE - GESTION DYNAMIQUE
+// ============================================================================
+
+// Handle distance edit changes with smart filtering | Gérer les changements d'édition de distance avec filtrage intelligent
+static void handleDistanceEditChange(int editId) {
+    if (isUpdatingInterface) return;
+
+    HWND hEdit = NULL;
+    float* targetDistance = NULL;
+    const char* modeName = "";
+
+    switch (editId) {
+    case 1: // Whisper
+        hEdit = hDistanceWhisperEdit;
+        targetDistance = &distanceWhisper;
+        modeName = "Whisper";
+        break;
+    case 2: // Normal
+        hEdit = hDistanceNormalEdit;
+        targetDistance = &distanceNormal;
+        modeName = "Normal";
+        break;
+    case 3: // Shout
+        hEdit = hDistanceShoutEdit;
+        targetDistance = &distanceShout;
+        modeName = "Shout";
+        break;
+    default:
+        return;
+    }
+
+    if (!hEdit || !targetDistance) return;
+
+    wchar_t text[32];
+    GetWindowTextW(hEdit, text, 32);
+    float newValue = (float)_wtof(text);
+
+    // Validate value with filtering | Valider la valeur avec filtrage
+    if (newValue > 0) {
+        BOOL valueChanged = FALSE;
+        float correctedValue = newValue;
+
+        // Apply digit filter if server limits are active | Appliquer le filtre de chiffres si les limites serveur sont actives
+        if (shouldApplyDistanceLimits()) {
+            float minimum, maximum;
+
+            switch (editId) {
+            case 1: // Whisper
+                minimum = (float)hubMinimumWhisper;
+                maximum = (float)hubMaximumWhisper;
+                break;
+            case 2: // Normal
+                minimum = (float)hubMinimumNormal;
+                maximum = (float)hubMaximumNormal;
+                break;
+            case 3: // Shout
+                minimum = (float)hubMinimumShout;
+                maximum = (float)hubMaximumShout;
+                break;
+            default:
+                return;
+            }
+
+            // Check if we have enough digits before validating | Vérifier si on a assez de chiffres avant de valider
+            if (!shouldValidateValue(newValue, minimum, maximum, modeName)) {
+                return;
+            }
+
+            correctedValue = validateDistanceValue(newValue, minimum, maximum, modeName);
+
+            // Update field if value was corrected | Mettre à jour le champ si la valeur a été corrigée
+            if (correctedValue != newValue) {
+                isUpdatingInterface = TRUE;
+
+                wchar_t correctedText[32];
+                swprintf(correctedText, 32, L"%.1f", correctedValue);
+                SetWindowTextW(hEdit, correctedText);
+
+                SendMessage(hEdit, EM_SETSEL, wcslen(correctedText), wcslen(correctedText));
+
+                isUpdatingInterface = FALSE;
+                valueChanged = TRUE;
+
+                if (enableLogGeneral) {
+                    char logMsg[128];
+                    snprintf(logMsg, sizeof(logMsg), "CORRECTED: %s %.1f -> %.1f (server limits)",
+                        modeName, newValue, correctedValue);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+        else {
+            // No server limits - accept values with at least 1 digit | Pas de limites serveur - accepter les valeurs avec au moins 1 chiffre
+            if (countSignificantDigits(newValue) < 1) {
+                return;
+            }
+        }
+
+        // Apply corrected or original value | Appliquer la valeur corrigée ou originale
+        if (correctedValue != *targetDistance) {
+            *targetDistance = correctedValue;
+            valueChanged = TRUE;
+
+            if (enableLogGeneral) {
+                char changeMsg[128];
+                snprintf(changeMsg, sizeof(changeMsg), "Distance changed: %s = %.1f", modeName, correctedValue);
+                mumbleAPI.log(ownID, changeMsg);
+            }
+        }
+
+        // Save and update interface if necessary | Sauvegarder et mettre à jour l'interface si nécessaire
+        if (valueChanged) {
+            saveVoiceSettings();
+            updateDynamicInterface();
+            forceInterfaceRefresh();
+        }
+    }
+}
+
+
+// Update dynamic interface | Mettre à jour l'interface dynamique
+static void updateDynamicInterface() {
+    if (isUpdatingInterface) return;
+    if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "DEBUG: updateDynamicInterface() CALLED!");
+    }
+
+    ULONGLONG currentTime = GetTickCount64();
+    if (currentTime - lastInterfaceUpdate < 100) return;
+    lastInterfaceUpdate = currentTime;
+
+    isUpdatingInterface = TRUE;
+
+    // Force distance-based muting if required | Forcer le muting basé sur la distance si nécessaire
+    if (hubForceDistanceBasedMuting && !enableDistanceMuting) {
+        enableDistanceMuting = TRUE;
+        if (hEnableDistanceMutingCheck) {
+            CheckDlgButton(hConfigDialog, 201, BST_CHECKED);
+        }
+    }
+
+    // Update distance muting checkbox state | Mettre à jour l'état de la checkbox de muting
+    if (hEnableDistanceMutingCheck) {
+        BOOL shouldDisable = hubDescriptionAvailable && hubForceDistanceBasedMuting;
+        EnableWindow(hEnableDistanceMutingCheck, !shouldDisable);
+
+        if (enableLogGeneral) {
+            char debugMsg[256];
+            snprintf(debugMsg, sizeof(debugMsg),
+                "Distance muting checkbox: hubDescriptionAvailable=%s, hubForceDistanceBasedMuting=%s, shouldDisable=%s",
+                hubDescriptionAvailable ? "TRUE" : "FALSE",
+                hubForceDistanceBasedMuting ? "TRUE" : "FALSE",
+                shouldDisable ? "TRUE" : "FALSE");
+            mumbleAPI.log(ownID, debugMsg);
+        }
+    }
+
+    // Force automatic channel change if required | Forcer le changement automatique de canal si nécessaire
+    if (hubForceAutomaticChannelSwitching && !enableAutomaticChannelChange) {
+        enableAutomaticChannelChange = TRUE;
+        if (hEnableAutomaticChannelChangeCheck) {
+            CheckDlgButton(hConfigDialog, 203, BST_CHECKED);
+        }
+    }
+
+    // Update channel switching checkbox state | Mettre à jour l'état de la checkbox de changement de canal
+    if (hEnableAutomaticChannelChangeCheck) {
+        BOOL shouldDisable = hubDescriptionAvailable && hubForceAutomaticChannelSwitching;
+        EnableWindow(hEnableAutomaticChannelChangeCheck, !shouldDisable);
+
+        if (enableLogGeneral) {
+            char debugMsg[256];
+            snprintf(debugMsg, sizeof(debugMsg),
+                "Channel switching checkbox: hubDescriptionAvailable=%s, hubForceAutomaticChannelSwitching=%s, shouldDisable=%s",
+                hubDescriptionAvailable ? "TRUE" : "FALSE",
+                hubForceAutomaticChannelSwitching ? "TRUE" : "FALSE",
+                shouldDisable ? "TRUE" : "FALSE");
+            mumbleAPI.log(ownID, debugMsg);
+        }
+    }
+
+    // Force positional audio if required | Forcer l'audio positionnel si nécessaire
+    if (hubForcePositionalAudio && !enableAutoAudioSettings) {
+        enableAutoAudioSettings = TRUE;
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Hub: Positional audio FORCED by server - enabling automatically");
+        }
+    }
+
+    updateConsolidatedDistanceMessages();
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "DEBUG: About to call updateServerLimitMessages()");
+    }
+
+    updateServerLimitMessages();
+    updateDistanceMutingMessage();
+    updateChannelSwitchingMessage();
+    updatePositionalAudioMessage();
+
+    float newWhisper = distanceWhisper;
+    float newNormal = distanceNormal;
+    float newShout = distanceShout;
+
+    // Apply server limits if distance-based muting is forced | Appliquer les limites serveur si le muting basé sur la distance est forcé
+    if (shouldApplyDistanceLimits()) {
+        newWhisper = validateDistanceValue(distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper, "Whisper");
+        newNormal = validateDistanceValue(distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal, "Normal");
+        newShout = validateDistanceValue(distanceShout, (float)hubMinimumShout, (float)hubMaximumShout, "Shout");
+    }
+    else {
+        // User has full control over distances | L'utilisateur a le contrôle total sur les distances
+        if (enableLogGeneral) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "USER FREEDOM: Using and SAVING user-defined distances - Whisper: %.1f, Normal: %.1f, Shout: %.1f (no server limits)",
+                distanceWhisper, distanceNormal, distanceShout);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+
+    BOOL distanceChanged = FALSE;
+
+    if (newWhisper != distanceWhisper) {
+        distanceWhisper = newWhisper;
+        distanceChanged = TRUE;
+        if (hDistanceWhisperEdit) {
+            wchar_t whisperText[32];
+            swprintf(whisperText, 32, L"%.1f", distanceWhisper);
+            SetWindowTextW(hDistanceWhisperEdit, whisperText);
+        }
+    }
+
+    if (newNormal != distanceNormal) {
+        distanceNormal = newNormal;
+        distanceChanged = TRUE;
+        if (hDistanceNormalEdit) {
+            wchar_t normalText[32];
+            swprintf(normalText, 32, L"%.1f", distanceNormal);
+            SetWindowTextW(hDistanceNormalEdit, normalText);
+        }
+    }
+
+    if (newShout != distanceShout) {
+        distanceShout = newShout;
+        distanceChanged = TRUE;
+        if (hDistanceShoutEdit) {
+            wchar_t shoutText[32];
+            swprintf(shoutText, 32, L"%.1f", distanceShout);
+            SetWindowTextW(hDistanceShoutEdit, shoutText);
+        }
+    }
+
+    // Always save distance changes | Toujours sauvegarder les changements de distance
+    if (distanceChanged) {
+        saveVoiceSettings();
+        applyDistanceToAllPlayers();
+
+        if (enableLogGeneral) {
+            char saveMsg[256];
+            snprintf(saveMsg, sizeof(saveMsg),
+                "Distances saved to config: Whisper=%.1f, Normal=%.1f, Shout=%.1f (ForceDistanceBasedMuting=%s)",
+                distanceWhisper, distanceNormal, distanceShout,
+                hubForceDistanceBasedMuting ? "TRUE" : "FALSE");
+            mumbleAPI.log(ownID, saveMsg);
+        }
+    }
+
+    // Force redraw of all messages | Forcer le redessin de tous les messages
+    if (hDistanceMutingMessage) {
+        InvalidateRect(hDistanceMutingMessage, NULL, TRUE);
+        UpdateWindow(hDistanceMutingMessage);
+    }
+    if (hChannelSwitchingMessage) {
+        InvalidateRect(hChannelSwitchingMessage, NULL, TRUE);
+        UpdateWindow(hChannelSwitchingMessage);
+    }
+    if (hPositionalAudioMessage) {
+        InvalidateRect(hPositionalAudioMessage, NULL, TRUE);
+        UpdateWindow(hPositionalAudioMessage);
+    }
+
+    isUpdatingInterface = FALSE;
+}
+
+static void forceInterfaceRefresh() {
+    if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
+    if (currentCategory != 2) return;
+
+    // Force immediate message updates | Forcer la mise à jour immédiate des messages
+    updateConsolidatedDistanceMessages();
+    updateDistanceMutingMessage();
+    updateChannelSwitchingMessage();
+    updatePositionalAudioMessage();
+
+    // Force redraw of all messages | Forcer le redessin de tous les messages
+    if (hDistanceWhisperMessage) {
+        InvalidateRect(hDistanceWhisperMessage, NULL, TRUE);
+        UpdateWindow(hDistanceWhisperMessage);
+    }
+    if (hDistanceNormalMessage) {
+        InvalidateRect(hDistanceNormalMessage, NULL, TRUE);
+        UpdateWindow(hDistanceNormalMessage);
+    }
+    if (hDistanceShoutMessage) {
+        InvalidateRect(hDistanceShoutMessage, NULL, TRUE);
+        UpdateWindow(hDistanceShoutMessage);
+    }
+}
+
+// ============================================================================
+// MODULE 17 : SURVEILLANCE DES TOUCHES
+// ============================================================================
+
+// Key monitoring thread | Thread de surveillance des touches
+static void keyMonitorThreadFunction(void* arg) {
+    keyMonitorThreadRunning = TRUE;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Key monitor thread: Started with ultra-reactive detection");
+    }
+
+    while (keyMonitorThreadRunning) {
+        BOOL currentKeyState = (GetAsyncKeyState(configUIKey) & 0x8000) != 0;
+
+        // Rising edge detection | Détection de front montant
+        if (currentKeyState && !lastKeyState) {
+            if (!isConfigDialogOpen) {
+                isConfigDialogOpen = TRUE;
+
+                if (enableLogGeneral) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "KEY INSTANT-DETECTED! %s (VK:%d) - opening interface immediately...",
+                        getKeyName(configUIKey), configUIKey);
+                    mumbleAPI.log(ownID, msg);
+                }
+
+                _beginthread(showPathSelectionDialogThread, 0, NULL);
+            }
+        }
+
+        lastKeyState = currentKeyState;
+        Sleep(50);
+    }
+
+    keyMonitorThreadRunning = FALSE;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Key monitor thread: Stopped");
+    }
+}
+
+
+// Start monitoring thread | Démarrer le thread de surveillance
+static void startKeyMonitorThread() {
+    if (!keyMonitorThreadRunning) {
+        keyMonitorThread = (HANDLE)_beginthread(keyMonitorThreadFunction, 0, NULL);
+
+        if (enableLogGeneral) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Key monitor thread started for key: %s (VK:%d)",
+                getKeyName(configUIKey), configUIKey);
+            mumbleAPI.log(ownID, msg);
+        }
+    }
+}
+
+
+// Stop monitoring thread | Arrêter le thread de surveillance
+static void stopKeyMonitorThread() {
+    keyMonitorThreadRunning = FALSE;
+    if (keyMonitorThread != NULL) {
+        Sleep(500);
+        keyMonitorThread = NULL;
+
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "Key monitor thread stopped");
+        }
+    }
+}
+
+// Install key monitoring | Installer la surveillance des touches
+static void installKeyMonitoring() {
+    if (enableLogGeneral) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Installing key monitoring for: %s (VK:%d)",
+            getKeyName(configUIKey), configUIKey);
+        mumbleAPI.log(ownID, msg);
+    }
+
+    startKeyMonitorThread();
+}
+
+// Remove key monitoring | Supprimer la surveillance des touches
+static void removeKeyMonitoring() {
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Removing key monitoring");
+    }
+
+    stopKeyMonitorThread();
+}
+
+// ============================================================================
+// MODULE 18 : FICHIER MOD
+// ============================================================================
+
+// Check if mod file is active | Vérifier si le fichier mod est actif
 static BOOL checkModFileActive() {
-    // Use simple function to verify file existence | Utilise une fonction simple pour vérifier l'existence du fichier
+    // Verify file existence | Vérifier l'existence du fichier
     DWORD attributes = GetFileAttributesA(modFilePath);
 
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-        // File doesn't exist or path is invalid | Le fichier n'existe pas ou le chemin est invalide
         return FALSE;
     }
 
-    // If we get here, file exists | Si on arrive ici, le fichier existe
+    // Get file information | Obtenir les informations du fichier
     WIN32_FIND_DATAA findFileData;
     HANDLE hFind = FindFirstFileA(modFilePath, &findFileData);
     if (hFind == INVALID_HANDLE_VALUE) {
-        return FALSE; // Unable to get file information | Impossible d'obtenir les informations du fichier
+        return FALSE;
     }
     FindClose(hFind);
 
@@ -2368,7 +4994,7 @@ static BOOL checkModFileActive() {
     ull.HighPart = findFileData.ftLastWriteTime.dwHighDateTime;
     time_t fileTime = (time_t)((ull.QuadPart / 10000000ULL) - 11644473600ULL);
 
-    // File is considered active if modified less than 5 seconds ago | Le fichier est considéré comme actif s'il a été modifié il y a moins de 5 secondes
+    // File is active if modified within 5 seconds | Le fichier est actif s'il a été modifié dans les 5 secondes
     if (time(NULL) - fileTime <= 5) {
         return TRUE;
     }
@@ -2376,11 +5002,11 @@ static BOOL checkModFileActive() {
     return FALSE;
 }
 
-// Read mod file data safely and robustly | Lit les données du fichier mod de manière sécurisée et robuste
+// Read mod file data safely | Lire les données du fichier mod de manière sécurisée
 static BOOL readModFileData(struct ModFileData* data) {
     if (!data) return FALSE;
 
-    FILE* file = fopen(modFilePath, "rb"); // Open in binary mode to avoid encoding issues | Ouvre en mode binaire pour éviter les problèmes d'encodage
+    FILE* file = fopen(modFilePath, "rb");
     if (!file) {
         if (enableLogModFile) {
             mumbleAPI.log(ownID, u8"ERREUR: Fichier introuvable. Re-vérifiez le chemin.");
@@ -2409,10 +5035,7 @@ static BOOL readModFileData(struct ModFileData* data) {
     char* endptr;
     data->valid = FALSE;
 
-    // Universal format parsing - no cleaning needed | Parsing du format universel - pas de nettoyage nécessaire
-    // Format: SEQ=309 X=1955.529907 Y=354.150146 Z=300.107513 YAW=106.453 YAWY=348.125
-
-    // Search and read SEQ | Rechercher et lire le SEQ
+    // Universal format parsing | Parsing du format universel
     char* seq_ptr = strstr(buffer, "SEQ=");
     if (seq_ptr) {
         seq_ptr += 4;
@@ -2430,7 +5053,7 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
 
-    // Search and read X | Rechercher et lire le X
+    // Parse X coordinate | Parser la coordonnée X
     char* x_ptr = strstr(buffer, "X=");
     if (x_ptr) {
         x_ptr += 2;
@@ -2448,7 +5071,7 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
 
-    // Search and read Y | Rechercher et lire le Y
+    // Parse Y coordinate | Parser la coordonnée Y
     char* y_ptr = strstr(buffer, "Y=");
     if (y_ptr) {
         y_ptr += 2;
@@ -2466,7 +5089,7 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
 
-    // Search and read Z | Rechercher et lire le Z
+    // Parse Z coordinate | Parser la coordonnée Z
     char* z_ptr = strstr(buffer, "Z=");
     if (z_ptr) {
         z_ptr += 2;
@@ -2484,7 +5107,7 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
 
-    // Search and read YAW | Rechercher et lire le YAW
+    // Parse YAW rotation | Parser la rotation YAW
     char* yaw_ptr = strstr(buffer, "YAW=");
     if (yaw_ptr) {
         yaw_ptr += 4;
@@ -2502,7 +5125,7 @@ static BOOL readModFileData(struct ModFileData* data) {
         return FALSE;
     }
 
-    // Search and read YAWY | Rechercher et lire le YAWY
+    // Parse YAWY rotation | Parser la rotation YAWY
     char* yawy_ptr = strstr(buffer, "YAWY=");
     if (yawy_ptr) {
         yawy_ptr += 5;
@@ -2528,6 +5151,7 @@ static BOOL readModFileData(struct ModFileData* data) {
 }
 
 static void modFileWatcherThread(void* arg) {
+
     while (enableGetPlayerCoordinates) {
         BOOL isModActive = checkModFileActive();
         BOOL newModDataRead = FALSE;
@@ -2540,12 +5164,6 @@ static void modFileWatcherThread(void* arg) {
                     lastSeq = newData.seq;
                     newModDataRead = TRUE;
                 }
-            }
-        }
-        else if (!isModActive) {
-            if (GetTickCount64() - lastModDataTick > 10000) { // 10 seconds
-                // If mod file not updated for 10 seconds, consider it inactive
-                useModFile = FALSE;
             }
         }
 
@@ -2562,650 +5180,72 @@ static void modFileWatcherThread(void* arg) {
             avatarAxisZ = -(float)sin(yawRad);
 
             coordinatesValid = TRUE;
-            useModFile = TRUE;
             lastModDataTick = currentTick;
         }
         else if (!isModActive) {
-            if (currentTick - lastModDataTick > 1500) {
-                useModFile = FALSE;
-            }
-        }
-
-        if (!useModFile) {
-            if (enableMemoryOffsets && getPlayerCoordinates()) {
-                coordinatesValid = TRUE;
-            }
-            else {
-                coordinatesValid = FALSE;
-            }
+            coordinatesValid = FALSE;
         }
 
         Sleep(20);
     }
 }
 
-static volatile int connectionAttempts = 0; // Connection attempt counter | Compteur de tentatives de connexion
+// ============================================================================
+// MODULE 19 : THREADS SYSTÈME
+// ============================================================================
 
-static volatile BOOL fusionRequestSent = FALSE; // New flag to check if FUSION request was sent | Nouveau flag pour vérifier si la requête FUSION a été envoyée
 
-// Connect to server and retrieve version/zones | Se connecter au serveur et récupérer version/zones
-static void connectToServer(void* param) {
-    if (!useServer) {
-        if (enableLogServer) {
-            displayInChat("Server is disabled, connection ignored | Le serveur est désactivé, connexion ignorée");
+// High-frequency voice system thread | Thread du système de voix à haute fréquence
+static void voiceSystemThread(void* arg) {
+    Sleep(2000);
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "HIGH-FREQUENCY Voice system thread: Now active at 40ms intervals");
+    }
+
+    while (enableGetPlayerCoordinates) {
+        if (strlen(localVoiceData.playerName) == 0) {
+            getLocalPlayerName();
         }
-        return;
-    }
 
-    if (connectionAttempts >= 2) return;
+        updateVoiceMode();
 
-    WSADATA wsaData;
-    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (result != 0) {
-        if (enableLogServer) {
-            displayInChat("WSAStartup failed");
-        }
-        return;
-    }
-
-    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    struct sockaddr_in serverAddr = { 0 };
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(SERVER_PORT);
-    inet_pton(AF_INET, SERVER_IP, &serverAddr.sin_addr);
-
-    if (connect(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        connectionAttempts++;
-        closesocket(sock);
-        return;
-    }
-
-    Sleep(1000);
-
-    if (!fusionRequestSent) {
-        send(sock, "FUSION\n", (int)strlen("FUSION\n"), 0);
-        fusionRequestSent = TRUE;
-    }
-
-    char* buffer = (char*)malloc(16384);
-    if (buffer == NULL) {
-        if (enableLogServer) {
-            displayInChat("Memory allocation error | Erreur d'allocation de mémoire");
-        }
-        closesocket(sock);
-        WSACleanup();
-        return;
-    }
-
-    int bytesRead = recv(sock, buffer, 16383, 0);
-    if (bytesRead > 0) {
-        buffer[bytesRead] = '\0';
-
-        // Context variable for strtok_s | Variable pour le contexte de strtok_s
-        char* context = NULL;
-
-        // Split response by line using \n as separator | Découpe la réponse par ligne en utilisant \n comme séparateur
-        char* line = strtok_s(buffer, "\n", &context);
-        while (line != NULL) {
-            // Check if line contains "VERSION:" | Vérifie si la ligne contient "VERSION:"
-            if (strncmp(line, "VERSION:", 8) == 0) {
-                isConnected = (strcmp(line, REQUIRED_VERSION) == 0);
-                if (enableLogServer) {
-                    mumbleAPI.log(ownID, isConnected ? "The version is compatible." : "The version is not compatible.");
-                }
-                versionReceived = TRUE; // Mark version as received | Marquer la version comme reçue
-            }
-            // Check if line contains "ZONES:" | Vérifie si la ligne contient "ZONES:"
-            else if (strncmp(line, "ZONES:", 6) == 0) {
-                parseZones(line); // Call parseZones to analyze zones | Appelle parseZones pour analyser les zones
-                zonesReceived = TRUE; // Mark zones as received | Marquer les zones comme reçues
-            }
-            // Move to next line | Passe à la ligne suivante
-            line = strtok_s(NULL, "\n", &context);
-        }
-    }
-    else {
-        if (enableLogServer) {
-            displayInChat("Error reading server response | Erreur lors de la lecture de la réponse du serveur");
-        }
-    }
-
-    // If version and zones received, close connection | Si version et zones reçus, fermer la connexion
-    if (versionReceived && zonesReceived) {
-        closesocket(sock); // Close connection | Ferme la connexion
-        WSACleanup();      // Release connection resources | Libère les ressources de la connexion
-    }
-
-    free(buffer);
-}
-
-// Start version check thread | Démarrer le thread de vérification de version
-static void startVersionCheck() {
-    if (!useServer) {
-        if (enableLogServer) {
-            displayInChat("Version checking is disabled | La vérification de version est désactivée");
-        }
-        return;
-    }
-
-    if (!enableStartVersionCheck) return;
-    _beginthread(connectToServer, 0, NULL);
-}
-
-// Function to get process ID of ConanSandbox.exe | Fonction pour obtenir l'ID du processus ConanSandbox.exe
-static BOOL findProcessId(const TCHAR* processName, DWORD* processID) {
-    if (!enableFindProcessId) return FALSE;  // Check if enabled | Vérification si activée
-
-    HANDLE hProcessSnap;
-    PROCESSENTRY32 pe32 = { 0 };
-    hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-
-    if (hProcessSnap == INVALID_HANDLE_VALUE) {
-        return FALSE;
-    }
-
-    pe32.dwSize = sizeof(PROCESSENTRY32);
-
-    if (!Process32First(hProcessSnap, &pe32)) {
-        CloseHandle(hProcessSnap);
-        return FALSE;
-    }
-
-    do {
-        if (_tcsicmp(pe32.szExeFile, processName) == 0) {
-            *processID = pe32.th32ProcessID;
-            CloseHandle(hProcessSnap);
-            return TRUE;
-        }
-    } while (Process32Next(hProcessSnap, &pe32));
-
-    CloseHandle(hProcessSnap);
-    return FALSE;
-}
-
-// Function to get base address of ConanSandbox.exe | Fonction pour obtenir l'adresse de base de ConanSandbox.exe
-static BOOL findBaseAddress(DWORD processID, LPVOID* baseAddress) {
-    if (!enableFindBaseAddress) return FALSE;  // Check if enabled | Vérification si activée
-
-    HANDLE hModuleSnap = INVALID_HANDLE_VALUE;
-    MODULEENTRY32 me32 = { 0 };
-
-    hModuleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, processID);
-    if (hModuleSnap == INVALID_HANDLE_VALUE) {
-        return FALSE;
-    }
-
-    me32.dwSize = sizeof(MODULEENTRY32);
-
-    if (!Module32First(hModuleSnap, &me32)) {
-        CloseHandle(hModuleSnap);
-        return FALSE;
-    }
-
-    *baseAddress = me32.modBaseAddr;
-    CloseHandle(hModuleSnap);
-    return TRUE;
-}
-
-// Function to read a float at given memory address | Fonction pour lire un float à une adresse mémoire donnée
-static BOOL readMemoryValue(HANDLE hProcess, LPVOID address, float* value) {
-    if (!enableReadMemoryValue) return FALSE;  // Check if enabled | Vérification si activée
-
-    SIZE_T bytesRead;
-    if (ReadProcessMemory(hProcess, address, value, sizeof(float), &bytesRead) && bytesRead == sizeof(float)) {
-        return TRUE;
-    }
-    return FALSE;
-}
-
-// Read coordinates using offset chain | Lire les coordonnées en utilisant une chaîne d'offsets
-static BOOL readCoordinates(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets, SIZE_T offsetCount, float* value) {
-    DWORD_PTR currentAddress = baseAddress;
-    for (SIZE_T i = 0; i < offsetCount; ++i) {
-        if (!ReadProcessMemory(hProcess, (LPCVOID)currentAddress, &currentAddress, sizeof(currentAddress), NULL)) {
-            return FALSE; // Return FALSE if error encountered | Retourne FALSE si une erreur est rencontrée
-        }
-        currentAddress += offsets[i];
-    }
-    return readMemoryValue(hProcess, (LPVOID)currentAddress, value);
-}
-
-// Function to read avatar X axis without backup | Fonction pour lire l'axe X de l'avatar sans sauvegarde
-static BOOL readavatarAxisX(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets, SIZE_T offsetCount, float* value) {
-    // Use same logic as Y axis but without backup offsets | On utilise la même logique que pour l'axe Y, mais sans les offsets de secours
-    return readCoordinates(hProcess, baseAddress, offsets, offsetCount, value);
-}
-
-// Function to read avatar Y axis without backup | Fonction pour lire l'axe Y de l'avatar sans sauvegarde
-static BOOL readavatarAxisY(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets, SIZE_T offsetCount, float* value) {
-    // Use same logic as Y axis but without backup offsets | On utilise la même logique que pour l'axe Y, mais sans les offsets de secours
-    return readCoordinates(hProcess, baseAddress, offsets, offsetCount, value);
-}
-
-// Function to read avatar Z axis without backup | Fonction pour lire l'axe Z de l'avatar sans sauvegarde
-static BOOL readavatarAxisZ(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets, SIZE_T offsetCount, float* value) {
-    // Use same logic as other axes but without backup offsets | On utilise la même logique que pour les autres axes, mais sans les offsets de secours
-    return readCoordinates(hProcess, baseAddress, offsets, offsetCount, value);
-}
-
-// Function to read yaw and convert to X and Y axes | Fonction pour lire le yaw et le convertir en axes X et Y
-static BOOL readYawToAxes(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets, SIZE_T offsetCount, float* yawX, float* yawY) {
-    float yaw;
-    if (readCoordinates(hProcess, baseAddress, offsets, offsetCount, &yaw)) {
-        // Convert yaw to radians then to X and Y components | Conversion du yaw en radians puis en composantes X et Y
-        float yawRad = yaw * 3.14159265f / 180.0f;
-        *yawX = (float)cos(yawRad);
-        *yawY = (float)sin(yawRad);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-// Function to read yaw Z angle and convert to a normalized vector component | Fonction pour lire l'angle Z du lacet (pitch) et le convertir en une composante de vecteur normalisée
-static BOOL readYawZ(HANDLE hProcess, DWORD_PTR baseAddress, DWORD_PTR* offsets, SIZE_T offsetCount, float* yawZ) {
-    float angle;
-    // Read the pitch angle in degrees | Lit l'angle de tangage (pitch) en degrés
-    if (readCoordinates(hProcess, baseAddress, offsets, offsetCount, &angle)) {
-        // Convert pitch angle (in degrees) to the Z component of a directional vector. | Convertit l'angle de tangage (en degrés) en composante Z d'un vecteur directionnel.
-        // Mumble expects this as sin(pitch_in_radians). | Mumble attend cette valeur sous la forme sin(pitch_en_radians).
-        // We multiply by -1 because in many games, looking up is a negative angle. | Nous multiplions par -1 car dans de nombreux jeux, regarder vers le haut correspond à un angle négatif.
-        float pitchRad = -angle * 3.14159265f / 180.0f;
-        *yawZ = sinf(pitchRad);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-// Function to get player coordinates | Fonction pour obtenir les coordonnées du joueur
-static BOOL getPlayerCoordinates() {
-    // Check if memory offsets are enabled
-    if (!enableMemoryOffsets) {
-        return FALSE;
-    }
-
-    if (!enableGetPlayerCoordinates) return FALSE;  // Check if enabled | Vérification si activée
-
-    // Before reading coordinates, check version | Avant de lire les coordonnées, vérifiez la version
-    static bool versionChecked = false;  // Variable to track if version was checked | Variable pour le suivi de la vérification de version
-    static bool versionIncompatibleLogged = false; // Variable to track if message was displayed | Variable pour le suivi de l'affichage du message
-
-    if (!versionChecked && useServer) {
-        // Check connection before getting coordinates | Vérifie la connexion avant d'obtenir les coordonnées
-        if (!isConnected) {
-            startVersionCheck(); // Start version check thread | Démarre le thread de vérification de version
-            return FALSE; // Don't proceed if not connected | Ne pas procéder si pas connecté
-        }
-        versionIncompatibleLogged = false; // Reset if version is correct | Réinitialiser si la version est correcte
-        versionChecked = true; // Mark that version was checked | Marquer que la version a été vérifiée
-    }
-
-    static bool processIdNotFound = false;
-    static bool successMessageLogged = false; // Declaration here for success tracking | Déclaration ici pour le suivi des succès
-    DWORD processID = 0;
-    LPVOID baseAddress = NULL;
-    HANDLE hProcess = NULL;
-
-    // Primary base addresses for coordinates | Adresses de base principales pour les coordonnées
-    DWORD_PTR baseAddressOffsetX_Principal = 0x05AA56F0;
-    DWORD_PTR baseAddressOffsetY_Principal = 0x05AA56F0;
-    DWORD_PTR baseAddressOffsetZ_Principal = 0x05AA56F0;
-
-    // Base addresses for yaw offsets | Adresses de base pour les offsets yaw
-    DWORD_PTR baseAddressOffsetYaw_Single = 0x05D9CF70; // For mode 1 single yaw offset | Pour le mode 1 offset yaw unique
-    DWORD_PTR baseAddressOffsetYawX_Native = 0x05B3AF98; // For mode 2 native yaw X offsets | Pour le mode 2 offsets natifs yaw X
-    DWORD_PTR baseAddressOffsetYawY_Native = 0x05CFDF60; // For mode 2 native yaw Y offsets | Pour le mode 2 offsets natifs yaw Y
-    DWORD_PTR baseAddressOffsetYawZ_Principal = 0x05AA18F8; // TO REPLACE: Base address for YAW Z | À REMPLACER: Adresse de base pour YAW Z
-
-    // Backup base addresses | Adresses de base de secours
-    DWORD_PTR baseAddressOffsetX_Backup = 0x05884C30;
-    DWORD_PTR baseAddressOffsetY_Backup = 0x05884C30;
-    DWORD_PTR baseAddressOffsetZ_Backup = 0x05884C30;
-
-    // Backup base addresses for yaw offsets | Adresses de base backup pour les offsets yaw
-    DWORD_PTR baseAddressOffsetYaw_Single_Backup = 0x05D9CF70; // Backup for mode 1 single yaw offset | Backup pour le mode 1 offset yaw unique
-    DWORD_PTR baseAddressOffsetYawX_Native_Backup = 0x05884C30; // Backup for mode 2 native yaw X offsets | Backup pour le mode 2 offsets natifs yaw X
-    DWORD_PTR baseAddressOffsetYawY_Native_Backup = 0x05884C30; // Backup for mode 2 native yaw Y offsets | Backup pour le mode 2 offsets natifs yaw Y
-    DWORD_PTR baseAddressOffsetYawZ_Backup = 0x05D9CF70; // TO REPLACE: Backup base address for YAW Z | À REMPLACER: Adresse de base de secours pour YAW Z
-
-    // Primary offsets | Offsets principaux
-    DWORD_PTR offsetX[] = { 0x218, 0x7B0, 0x1E0, 0xA00, 0x3F0, 0x170, 0x1B0 };
-    DWORD_PTR offsetY[] = { 0x218, 0x7B0, 0x1E0, 0xA00, 0x3F0, 0x170, 0x1B4 };
-    DWORD_PTR offsetZ[] = { 0x218, 0x7B0, 0x1E0, 0xA00, 0x3F0, 0x170, 0x1B8 };
-
-
-    // Yaw offsets | Offsets pour le yaw
-    DWORD_PTR offsetYawSingle[] = { 0x30, 0x400, 0x170, 0x100, 0x40, 0xF8, 0x1E4 }; // Single yaw offset | Offset pour le yaw unique
-    DWORD_PTR offsetYawXNative[] = { 0x10, 0x420, 0xC58 }; // Native yaw X offset | Offset pour yaw X natif
-    DWORD_PTR offsetYawYNative[] = { 0x8, 0xC8, 0x8, 0x438, 0x14C }; // Native yaw Y offset | Offset pour yaw Y natif
-    DWORD_PTR offsetYawZ[] = { 0x38, 0x0, 0x30, 0x78, 0x170, 0x20, 0x418 }; // TO REPLACE: Offsets for YAW Z | À REMPLACER: Offsets pour YAW Z
-
-    // Backup offsets | Offsets de secours
-    DWORD_PTR backupOffsetX[] = { 0x0, 0x48, 0x8, 0x510, 0x8, 0x948, 0x1B0 };
-    DWORD_PTR backupOffsetY[] = { 0x0, 0x448, 0x100, 0x30, 0xF8, 0xF8, 0x1B4 };
-    DWORD_PTR backupOffsetZ[] = { 0x0, 0x370, 0x80, 0x80, 0x20, 0x170, 0x1B8 };
-
-    // Backup yaw offsets | Offsets de secours pour le yaw
-    DWORD_PTR backupOffsetYawSingle[] = { 0x0, 0x48, 0x8, 0x510, 0x8, 0x948, 0x1BC }; // Single yaw backup | Backup yaw unique
-    DWORD_PTR backupOffsetYawXNative[] = { 0x0, 0x48, 0x8, 0x510, 0x8, 0x948, 0x1B8 }; // Native yaw X backup | Backup yaw X natif
-    DWORD_PTR backupOffsetYawYNative[] = { 0x0, 0x448, 0x100, 0x30, 0xF8, 0xF8, 0x1BC }; // Native yaw Y backup | Backup yaw Y natif
-    DWORD_PTR backupOffsetYawZ[] = { 0x0, 0x48, 0x8, 0x510, 0x8, 0x948, 0x1C0 }; // TO REPLACE: Backup offsets for YAW Z | À REMPLACER: Offsets de secours pour YAW Z
-
-    TCHAR targetProcess[] = TEXT("ConanSandbox.exe"); // Target process name | Nom du processus cible
-
-    if (!findProcessId(targetProcess, &processID)) {
-        if (!processIdNotFound) {
-            if (enableLogProcess) {
-                mumbleAPI.log(ownID, u8"Erreur : Impossible de trouver ConanSandbox.exe (2).");
-            }
-            processIdNotFound = true;
-        }
-        return FALSE;
-    }
-
-    processIdNotFound = false;
-    hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, processID);
-    if (hProcess == NULL) {
-        if (enableLogProcess) {
-            mumbleAPI.log(ownID, u8"Erreur : Impossible d'ouvrir ConanSandbox.exe.");
-        }
-        return FALSE;
-    }
-
-    if (!findBaseAddress(processID, &baseAddress)) {
-        if (enableLogProcess) {
-            mumbleAPI.log(ownID, u8"Erreur : Impossible de trouver ConanSandbox.exe 1.");
-        }
-        CloseHandle(hProcess);
-        return FALSE;
-    }
-
-    BOOL errorX = FALSE, errorY = FALSE, errorZ = FALSE;
-    static bool errorLoggedX = false, errorLoggedY = false, errorLoggedZ = false;
-
-    // Read X axis with separate offsets | Lire l'axe X avec les offsets séparés
-    DWORD_PTR currentAddressX = (DWORD_PTR)baseAddress + baseAddressOffsetX_Principal;
-    if (!readCoordinates(hProcess, currentAddressX, offsetX, sizeof(offsetX) / sizeof(offsetX[0]), &axe_x)) {
-        usedPrimaryX = false; // Indicate primary offset failed | Indiquer que l'offset principal a échoué
-        if (enableBackupOffsetX) { // Check if backup offsets are enabled | Vérifier si les offsets de secours sont activés
-            currentAddressX = (DWORD_PTR)baseAddress + baseAddressOffsetX_Backup;
-            if (!readCoordinates(hProcess, currentAddressX, backupOffsetX, sizeof(backupOffsetX) / sizeof(backupOffsetX[0]), &axe_x)) {
-                errorX = TRUE; // Log error | Enregistrer l'erreur
-            }
-        }
-    }
-
-    // Read Y axis with separate offsets | Lire l'axe Y avec les offsets séparés
-    DWORD_PTR currentAddressY = (DWORD_PTR)baseAddress + baseAddressOffsetY_Principal;
-    if (!readCoordinates(hProcess, currentAddressY, offsetY, sizeof(offsetY) / sizeof(offsetY[0]), &axe_y)) {
-        usedPrimaryY = false; // Indicate primary offset failed | Indiquer que l'offset principal a échoué
-        if (enableBackupOffsetY) { // Check if backup offsets are enabled | Vérifier si les offsets de secours sont activés
-            currentAddressY = (DWORD_PTR)baseAddress + baseAddressOffsetY_Backup;
-            if (!readCoordinates(hProcess, currentAddressY, backupOffsetY, sizeof(backupOffsetY) / sizeof(backupOffsetY[0]), &axe_y)) {
-                errorY = TRUE; // Log error | Enregistrer l'erreur
-            }
-        }
-    }
-
-    // Read Z axis with separate offsets | Lire l'axe Z avec les offsets séparés
-    DWORD_PTR currentAddressZ = (DWORD_PTR)baseAddress + baseAddressOffsetZ_Principal;
-    if (!readCoordinates(hProcess, currentAddressZ, offsetZ, sizeof(offsetZ) / sizeof(offsetZ[0]), &axe_z)) {
-        usedPrimaryZ = false; // Indicate primary offset failed | Indiquer que l'offset principal a échoué
-        if (enableBackupOffsetZ) { // Check if backup offsets are enabled | Vérifier si les offsets de secours sont activés
-            currentAddressZ = (DWORD_PTR)baseAddress + baseAddressOffsetZ_Backup;
-            if (!readCoordinates(hProcess, currentAddressZ, backupOffsetZ, sizeof(backupOffsetZ) / sizeof(backupOffsetZ[0]), &axe_z)) {
-                errorZ = TRUE; // Log error | Enregistrer l'erreur
-            }
-        }
-    }
-
-    // Yaw offset handling if enabled | Gestion des offsets yaw si activés
-    if (enableYawOffsets) {
-        BOOL yawErrorX = FALSE, yawErrorY = FALSE, yawErrorZ = FALSE;
-
-        if (useNativeTwoYawOffsets) {
-            // Mode 2: Native separate offsets for X and Y
-            DWORD_PTR currentAddressYawXNative = (DWORD_PTR)baseAddress + baseAddressOffsetYawX_Native;
-            if (!readavatarAxisX(hProcess, currentAddressYawXNative, offsetYawXNative, sizeof(offsetYawXNative) / sizeof(offsetYawXNative[0]), &avatarAxisX)) {
-                usedPrimaryYawX = false;
-                if (enableBackupYawOffsets) {
-                    currentAddressYawXNative = (DWORD_PTR)baseAddress + baseAddressOffsetYawX_Native_Backup;
-                    if (!readavatarAxisX(hProcess, currentAddressYawXNative, backupOffsetYawXNative, sizeof(backupOffsetYawXNative) / sizeof(backupOffsetYawXNative[0]), &avatarAxisX)) {
-                        yawErrorX = TRUE;
-                    }
-                }
-            }
-
-            DWORD_PTR currentAddressYawYNative = (DWORD_PTR)baseAddress + baseAddressOffsetYawY_Native;
-            if (!readavatarAxisY(hProcess, currentAddressYawYNative, offsetYawYNative, sizeof(offsetYawYNative) / sizeof(offsetYawYNative[0]), &avatarAxisY)) {
-                usedPrimaryYawY = false;
-                if (enableBackupYawOffsets) {
-                    currentAddressYawYNative = (DWORD_PTR)baseAddress + baseAddressOffsetYawY_Native_Backup;
-                    if (!readavatarAxisY(hProcess, currentAddressYawYNative, backupOffsetYawYNative, sizeof(backupOffsetYawYNative) / sizeof(backupOffsetYawYNative[0]), &avatarAxisY)) {
-                        yawErrorY = TRUE;
-                    }
-                }
-            }
-        }
-        else {
-            // Mode 1: Single yaw offset converted to X/Y
-            DWORD_PTR currentAddressYawSingle = (DWORD_PTR)baseAddress + baseAddressOffsetYaw_Single;
-            if (!readYawToAxes(hProcess, currentAddressYawSingle, offsetYawSingle, sizeof(offsetYawSingle) / sizeof(offsetYawSingle[0]), &avatarAxisX, &avatarAxisY)) {
-                usedPrimaryYawX = false;
-                usedPrimaryYawY = false;
-                if (enableBackupYawOffsets) {
-                    currentAddressYawSingle = (DWORD_PTR)baseAddress + baseAddressOffsetYaw_Single_Backup;
-                    if (!readYawToAxes(hProcess, currentAddressYawSingle, backupOffsetYawSingle, sizeof(backupOffsetYawSingle) / sizeof(backupOffsetYawSingle[0]), &avatarAxisX, &avatarAxisY)) {
-                        yawErrorX = TRUE;
-                        yawErrorY = TRUE;
-                    }
-                }
+        if (enableLogGeneral) {
+            static ULONGLONG lastDebugTime = 0;
+            ULONGLONG currentTime = GetTickCount64();
+            if (currentTime - lastDebugTime > 20000) {
+                char debugMsg[256];
+                snprintf(debugMsg, sizeof(debugMsg),
+                    "HIGH-FREQ Voice system status - coordinatesValid: %s, playerCount: %zu",
+                    coordinatesValid ? "TRUE" : "FALSE",
+                    remotePlayerCount);
+                mumbleAPI.log(ownID, debugMsg);
+                lastDebugTime = currentTime;
             }
         }
 
-        // Read YAW Z in both modes
-        DWORD_PTR currentAddressYawZ = (DWORD_PTR)baseAddress + baseAddressOffsetYawZ_Principal;
-        if (!readYawZ(hProcess, currentAddressYawZ, offsetYawZ, sizeof(offsetYawZ) / sizeof(offsetYawZ[0]), &avatarAxisZ)) {
-            usedPrimaryYawZ = false;
-            if (enableBackupYawOffsets) {
-                currentAddressYawZ = (DWORD_PTR)baseAddress + baseAddressOffsetYawZ_Backup;
-                if (!readYawZ(hProcess, currentAddressYawZ, backupOffsetYawZ, sizeof(backupOffsetYawZ) / sizeof(backupOffsetYawZ[0]), &avatarAxisZ)) {
-                    yawErrorZ = TRUE;
-                    avatarAxisZ = 0.0f; // Default to 0 on failure
-                }
-            }
-            else {
-                avatarAxisZ = 0.0f; // Default to 0 if backup is disabled and primary fails
-            }
+        if (coordinatesValid && enableDistanceMuting) {
+            sendCompletePositionalData();
         }
+
+        Sleep(40);
     }
 
-    // Success message logging | Journalisation du message de réussite
-    if (!successMessageLogged && !(errorX || errorY || errorZ)) {
-        // Create success message based on used offsets | Créer le message de succès en fonction des offsets utilisés
-        char successMsg[256];
-        sprintf_s(successMsg, sizeof(successMsg), u8"Succès : Coordonnées trouvées : X %s, Y %s, Z %s.",
-            usedPrimaryX ? "principal" : "secondaire",
-            usedPrimaryY ? "principal" : "secondaire",
-            usedPrimaryZ ? "principal" : "secondaire");
-        if (enableLogOffsets) {
-            //mumbleAPI.log(ownID, successMsg);
-        }
-        successMessageLogged = true; // Mark that message was logged | Marquer que le message a été logué
-    }
-    else if (errorX || errorY || errorZ) {
-        // Reset successMessageLogged if an error occurs | Réinitialiser successMessageLogged si une erreur se produit
-        successMessageLogged = false;
-    }
-
-    // Basic mechanism for main axes | Mécanisme de base pour les axes principaux
-    static bool errorLogged = false;
-    static time_t lastErrorTime = 0; // To track time of last error message | Pour garder la trace du temps du dernier message d'erreur
-    if ((errorX || errorY || errorZ) && (!errorLogged || difftime(time(NULL), lastErrorTime) >= 60)) {
-        char errorMsg[256];
-        strcpy_s(errorMsg, sizeof(errorMsg), u8"Erreur : Impossible de récupérer la position des axes : ");
-        if (errorX) strcat_s(errorMsg, sizeof(errorMsg), "X ");
-        if (errorY) strcat_s(errorMsg, sizeof(errorMsg), "Y ");
-        if (errorZ) strcat_s(errorMsg, sizeof(errorMsg), "Z ");
-
-        // Add retry message here | Ajoutez le message de nouvelle tentative ici
-        strcat_s(errorMsg, sizeof(errorMsg), u8"nouvelle tentative en cours.");
-
-        if (enableLogOffsets) {
-            mumbleAPI.log(ownID, errorMsg);
-        }
-        errorLogged = true;
-        lastErrorTime = time(NULL); // Update last error message time | Met à jour le temps du dernier message d'erreur
-    }
-    else if (!errorX && !errorY && !errorZ) {
-        errorLogged = false; // Reset if all readings succeed | Réinitialiser si toutes les lectures réussissent
-    }
-
-    // Group backup axis error messages | Regroupement des messages d'erreur des axes de secours
-    static bool errorLoggedBackup = false;
-    static time_t lastErrorTimeBackup = 0; // To track time of last error message | Pour garder la trace du temps du dernier message d'erreur
-    if ((errorX || errorY || errorZ) && (!errorLoggedBackup || difftime(time(NULL), lastErrorTimeBackup) >= 60)) {
-        char errorMsg[256];
-        strcpy_s(errorMsg, sizeof(errorMsg), u8"Erreur : Impossible de lire les axes de secours : ");
-        if (errorX) strcat_s(errorMsg, sizeof(errorMsg), "X ");
-        if (errorY) strcat_s(errorMsg, sizeof(errorMsg), "Y ");
-        if (errorZ) strcat_s(errorMsg, sizeof(errorMsg), "Z ");
-
-        // Add retry message here | Ajoutez le message de nouvelle tentative ici
-        strcat_s(errorMsg, sizeof(errorMsg), u8"nouvelle tentative en cours.");
-
-        if (enableLogOffsets) {
-            mumbleAPI.log(ownID, errorMsg);
-        }
-        errorLoggedBackup = true;
-        lastErrorTimeBackup = time(NULL); // Update last error message time | Met à jour le temps du dernier message d'erreur
-    }
-    else if (!errorX && !errorY && !errorZ) {
-        errorLoggedBackup = false; // Reset if all readings succeed | Réinitialiser si toutes les lectures réussissent
-    }
-
-    CloseHandle(hProcess);
-    return !(errorX || errorY || errorZ);
-}
-
-// Read configuration from file | Lire la configuration depuis le fichier
-static void readConfigurationSettings() {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) return;
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    BOOL fileExists = (GetFileAttributesW(configFile) != INVALID_FILE_ATTRIBUTES);
-    BOOL foundSavedPath = FALSE;
-    BOOL foundEnableMemoryOffsets = FALSE;
-    BOOL foundEnableAutomaticChannelChange = FALSE;
-
-    wchar_t savedPathValue[MAX_PATH] = L"";
-
-    if (fileExists) {
-        FILE* f = _wfopen(configFile, L"r");
-        if (f) {
-            wchar_t line[1024];
-            while (fgetws(line, 1024, f)) {
-                wchar_t* p = line;
-                while (*p == L' ' || *p == L'\t') ++p;
-                wchar_t* end = p + wcslen(p);
-                while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
-                    *--end = L'\0';
-
-                if (*p == L'#' || *p == L';' || *p == L'\0') continue;
-
-                wchar_t* eq = wcschr(p, L'=');
-                if (!eq) continue;
-                *eq = L'\0';
-                wchar_t* key = p;
-                wchar_t* val = eq + 1;
-                while (*val == L' ' || *val == L'\t') ++val;
-
-                wchar_t valLower[16];
-                int i = 0;
-                for (; i < 15 && val[i]; ++i) valLower[i] = (wchar_t)towlower(val[i]);
-                valLower[i] = 0;
-
-                if (wcsncmp(key, L"SavedPath", 9) == 0) {
-                    wcsncpy_s(savedPathValue, MAX_PATH, val, _TRUNCATE);
-                    foundSavedPath = TRUE;
-                }
-                else if (wcsncmp(key, L"EnableMemoryOffsets", 19) == 0) {
-                    enableMemoryOffsets = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                    foundEnableMemoryOffsets = TRUE;
-                }
-                else if (wcsncmp(key, L"EnableAutomaticChannelChange", 28) == 0) {
-                    enableAutomaticChannelChange = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                    foundEnableAutomaticChannelChange = TRUE;
-                }
-                else if (wcsncmp(key, L"WhisperKey", 10) == 0) {
-                    whisperKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"NormalKey", 9) == 0) {
-                    normalKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"ShoutKey", 8) == 0) {
-                    shoutKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"ConfigUIKey", 11) == 0) {
-                    configUIKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"EnableDistanceMuting", 20) == 0) {
-                    enableDistanceMuting = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                }
-                // NOUVEAU: Lire aussi les distances ici
-                else if (wcsncmp(key, L"DistanceWhisper", 15) == 0) {
-                    distanceWhisper = (float)_wtof(val);
-                }
-                else if (wcsncmp(key, L"DistanceNormal", 14) == 0) {
-                    distanceNormal = (float)_wtof(val);
-                }
-                else if (wcsncmp(key, L"DistanceShout", 13) == 0) {
-                    distanceShout = (float)_wtof(val);
-                }
-                else if (wcsncmp(key, L"VoiceToggleKey", 14) == 0) {
-                    voiceToggleKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"EnableVoiceToggle", 17) == 0) {
-                    enableVoiceToggle = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                }
-            }
-            fclose(f);
-        }
-    }
-
-    // Si le fichier n'existe pas ou qu'il manque une clé => réécriture
-    if (!fileExists || !foundSavedPath || !foundEnableMemoryOffsets || !foundEnableAutomaticChannelChange) {
-        FILE* f = _wfopen(configFile, L"w");
-        if (f) {
-            fwprintf(f, L"SavedPath=%s\n", foundSavedPath ? savedPathValue : L"");
-            fwprintf(f, L"EnableMemoryOffsets=%s\n", enableMemoryOffsets ? L"true" : L"false");
-            fwprintf(f, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
-            fwprintf(f, L"WhisperKey=%d\n", whisperKey);
-            fwprintf(f, L"NormalKey=%d\n", normalKey);
-            fwprintf(f, L"ShoutKey=%d\n", shoutKey);
-            fwprintf(f, L"ConfigUIKey=%d\n", configUIKey);
-            fwprintf(f, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-            // NOUVEAU: Écrire aussi les distances par défaut
-            fwprintf(f, L"DistanceWhisper=%.1f\n", distanceWhisper);
-            fwprintf(f, L"DistanceNormal=%.1f\n", distanceNormal);
-            fwprintf(f, L"DistanceShout=%.1f\n", distanceShout);
-            fclose(f);
-        }
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "HIGH-FREQUENCY Voice system thread: Stopped");
     }
 }
 
-// NOUVEAU: Fonction pour forcer l'initialisation complète
+// Force complete initialization | Forcer l'initialisation complète
 static void forceCompleteInitialization() {
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "Force complete initialization starting...");
     }
 
-    // S'assurer que tous les systèmes sont prêts
+    // Ensure all systems are ready | S'assurer que tous les systèmes sont prêts
     readConfigurationSettings();
 
-    // Vérifier si modFilePath est configuré
+    // Check if modFilePath is configured | Vérifier si modFilePath est configuré
     if (strlen(modFilePath) == 0) {
         if (enableLogGeneral) {
             mumbleAPI.log(ownID, "modFilePath empty - attempting auto-configuration");
@@ -3226,7 +5266,7 @@ static void forceCompleteInitialization() {
                         wchar_t* cr = wcschr(pathStart, L'\r');
                         if (cr) *cr = L'\0';
 
-                        // Convertir en chemin modFilePath
+                        // Convert to modFilePath | Convertir en chemin modFilePath
                         size_t converted = 0;
                         wcstombs_s(&converted, modFilePath, MAX_PATH, pathStart, _TRUNCATE);
                         strcat_s(modFilePath, MAX_PATH, "\\Pos.txt");
@@ -3246,48 +5286,80 @@ static void forceCompleteInitialization() {
 
     if (enableLogGeneral) {
         char msg[300];
-        snprintf(msg, sizeof(msg), "Configuration status - modFilePath: %s, enableDistanceMuting: %s, enableMemoryOffsets: %s",
-            modFilePath, enableDistanceMuting ? "TRUE" : "FALSE", enableMemoryOffsets ? "TRUE" : "FALSE");
+        snprintf(msg, sizeof(msg), "Configuration status - modFilePath: %s, enableDistanceMuting: %s",
+            modFilePath, enableDistanceMuting ? "TRUE" : "FALSE");
         mumbleAPI.log(ownID, msg);
     }
 }
 
-// Plugin initialization function
+// ============================================================================
+// MODULE 20 : CLEANUP
+// ============================================================================
+
+// Cleanup player mute states | Nettoyer les états de mute des joueurs
+static void cleanupPlayerMuteStates() {
+    playerMuteStateCount = 0;
+    memset(playerMuteStates, 0, sizeof(playerMuteStates));
+    lastDistanceCheck = 0;
+}
+
+// ============================================================================
+// MODULE 21 : CALLBACKS MUMBLE (ordre chronologique)
+// ============================================================================
+
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onUserTalkingStateChanged(mumble_connection_t connection,
+    mumble_userid_t userID,
+    mumble_talking_state_t talkingState) {
+    // Récupérer l'ID de l'utilisateur local
+    mumble_userid_t localUserID;
+    if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) != MUMBLE_STATUS_OK) {
+        return; // Impossible de déterminer l'utilisateur local
+    }
+
+    // Vérifier si c'est l'utilisateur local qui parle
+    if (userID != localUserID) {
+        return; // Ignorer les autres utilisateurs
+    }
+
+    // Activer/désactiver la surbrillance uniquement pour soi-même
+    if ((int)talkingState != 0) {
+        setOverlayHighlightState(userID, connection, TRUE);
+    }
+    else {
+        setOverlayHighlightState(userID, connection, FALSE);
+    }
+}
+
+
+// Plugin initialization function | Fonction d'initialisation du plugin
 mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
+    hVoiceOverlay = NULL;
+    hOverlayFont = NULL;
+    overlayThreadRunning = FALSE;
     ownID = pluginID;
     setlocale(LC_NUMERIC, "C");
 
-    // Enable all functions
-    enableSetMaximumAudioDistance = TRUE;
-    enableCheckPlayerZone = TRUE;
-    enableCheckVersionThread = TRUE;
-    enableStartVersionCheck = TRUE;
-    enableFindProcessId = TRUE;
-    enableFindBaseAddress = TRUE;
-    enableReadMemoryValue = TRUE;
-    enableGetPlayerCoordinates = TRUE;
+    lastAudioSettingsApply = 0;
 
-    // Initialization
-    useModFile = FALSE;
+    // Initialization | Initialisation
     lastFileCheck = 0;
     lastSeq = -1;
     modDataValid = FALSE;
 
-    // NOUVEAU: Initialisation du système de voix
-    memset(&localVoiceData, 0, sizeof(VoiceData));
-    localVoiceData.voiceMode = 1; // Normal par défaut
+    // Voice system initialization | Initialisation du système de voix
+    memset(&localVoiceData, 0, sizeof(CompletePositionalData));
     localVoiceData.voiceDistance = distanceNormal;
     remotePlayerCount = 0;
     lastVoiceDataSent = 0;
     lastKeyCheck = 0;
 
-    // Charger les distances de voix depuis la configuration
+    // Load voice distances from config | Charger les distances de voix depuis la configuration
     loadVoiceDistancesFromConfig();
 
-    // NOUVEAU: Lecture et activation automatique de la configuration
-    readConfigurationSettings(); // Déplacer avant les autres initialisations
+    // Read and activate configuration | Lecture et activation automatique de la configuration
+    readConfigurationSettings();
 
-    // NOUVEAU: Construire automatiquement le chemin modFilePath
+    // Auto-build modFilePath | Construire automatiquement le chemin modFilePath
     wchar_t* configFolder = getConfigFolderPath();
     if (configFolder) {
         wchar_t configFile[MAX_PATH];
@@ -3298,13 +5370,13 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
             while (fgetws(line, 512, file)) {
                 if (wcsncmp(line, L"SavedPath=", 10) == 0) {
                     wchar_t* pathStart = line + 10;
-                    // Nettoyer les retours à la ligne
+                    // Clean line breaks | Nettoyer les retours à la ligne
                     wchar_t* nl = wcschr(pathStart, L'\n');
                     if (nl) *nl = L'\0';
                     wchar_t* cr = wcschr(pathStart, L'\r');
                     if (cr) *cr = L'\0';
 
-                    // Convertir en chemin modFilePath
+                    // Convert to modFilePath | Convertir en chemin modFilePath
                     size_t converted = 0;
                     wcstombs_s(&converted, modFilePath, MAX_PATH, pathStart, _TRUNCATE);
                     strcat_s(modFilePath, MAX_PATH, "\\Pos.txt");
@@ -3325,7 +5397,7 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
         _beginthread(showPathSelectionDialogThread, 0, NULL);
     }
 
-    // Read saved path and convert to modFilePath
+    // Read saved path and convert to modFilePath | Lire le chemin sauvegardé et convertir en modFilePath
     wchar_t savedPath[MAX_PATH] = L"";
     wchar_t configFile[MAX_PATH];
     swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
@@ -3356,235 +5428,277 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
         mumbleAPI.log(ownID, debugMsg);
     }
 
-    // NOUVEAU: Forcer l'initialisation complète
+    // Force complete initialization | Forcer l'initialisation complète
     forceCompleteInitialization();
 
-    // Maintenant démarrer les threads
+    // Start threads | Démarrer les threads
     _beginthread(modFileWatcherThread, 0, NULL);
-
     _beginthread(voiceSystemThread, 0, NULL);
 
-    connectionAttempts = 0;
+    // CORRECTION: Start PERMANENT monitoring threads | Démarrer les threads de surveillance PERMANENTS
+    _beginthread(channelManagementThread, 0, NULL);
+    _beginthread(hubDescriptionMonitorThread, 0, NULL);
+
+    // Create voice overlay if enabled | Créer l'overlay vocal si activé
+    if (enableVoiceOverlay && enableDistanceMuting) {
+        createVoiceOverlay();
+        _beginthread(overlayMonitorThread, 0, NULL);
+    }
 
     return MUMBLE_STATUS_OK;
 }
 
-// NOUVEAU: Ajoutez cette fonction pour recevoir les données
-PLUGIN_EXPORT bool PLUGIN_CALLING_CONVENTION mumble_onReceiveData(mumble_connection_t connection,
-    mumble_userid_t sender,
-    const uint8_t* data,
-    size_t dataLength,
-    const char* dataID) {
-    // Vérifier si c'est notre type de données
-    if (strcmp(dataID, "ConanExiles_VoiceData") == 0 && dataLength == sizeof(VoiceData)) {
-        const VoiceData* receivedData = (const VoiceData*)data;
-        processReceivedVoiceData(receivedData, sender);
-        return true; // Données traitées
-    }
-
-    return false; // Pas nos données
-}
-
-uint32_t mumble_getFeatures() {
-    return MUMBLE_FEATURE_POSITIONAL;
-}
-
-uint8_t mumble_initPositionalData(const char* const* programNames, const uint64_t* programPIDs, size_t programCount) {
-    return MUMBLE_PDEC_OK;
-}
-
-bool mumble_fetchPositionalData(float* avatarPos, float* avatarDir, float* avatarAxis, float* cameraPos,
-    float* cameraDir, float* cameraAxis, const char** context, const char** identity) {
-
-    // Avatar positions (Y = height) | Positions de l'avatar (Y = hauteur)
-    avatarPos[0] = axe_x / 100.0f;
-    avatarPos[1] = axe_y / 100.0f;
-    avatarPos[2] = axe_z / 100.0f;
-
-    cameraPos[0] = avatarPos[0];
-    cameraPos[1] = avatarPos[1];
-    cameraPos[2] = avatarPos[2];
-
-
-    avatarDir[0] = avatarAxisX;
-    avatarDir[1] = avatarAxisY;
-    avatarDir[2] = avatarAxisZ;
-
-    cameraDir[0] = avatarDir[0];
-    cameraDir[1] = avatarDir[1];
-    cameraDir[2] = avatarDir[2];
-
-    // Dynamic "up" axis calculation from yaw/pitch | Calcul dynamique de l'axe "up" depuis yaw/pitch
-    const float deg2rad = 3.14159265f / 180.0f;
-    float yawRad = currentModData.yaw * deg2rad;
-    float pitchRad = -currentModData.yawY * deg2rad; // Same convention as avatarDir.Y | même convention que avatarDir.Y
-
-    float sy = sinf(yawRad);
-    float cy = cosf(yawRad);
-    float sp = sinf(pitchRad);
-    float cp = cosf(pitchRad);
-
-    // Calculate up vector: up = up0*cp - forward_yaw*sp | Calcul du vecteur up : up = up0*cp - forward_yaw*sp
-    avatarAxis[0] = -sy * sp; // X component | Composante X
-    avatarAxis[1] = cp;       // Y component | Composante Y
-    avatarAxis[2] = -cy * sp; // Z component | Composante Z
-
-    // Safe vector normalization | Normalisation sécurisée du vecteur
-    float uLen = sqrtf(avatarAxis[0] * avatarAxis[0] + avatarAxis[1] * avatarAxis[1] + avatarAxis[2] * avatarAxis[2]);
-    if (uLen > 1e-6f) {
-        avatarAxis[0] /= uLen; avatarAxis[1] /= uLen; avatarAxis[2] /= uLen;
-    }
-
-    cameraAxis[0] = avatarAxis[0];
-    cameraAxis[1] = avatarAxis[1];
-    cameraAxis[2] = avatarAxis[2];
-
-    *context = useModFile ? "MOD_ACTIVE" : (enableMemoryOffsets ? "MEMORY_OFFSETS" : "NO_DATA");
-    checkPlayerZone();
-    manageChannelBasedOnCoordinates();
-    *identity = "";
-    return true;
-}
-
-// Fonction pour nettoyer les données de position / Function to clean up positional data
-void mumble_shutdownPositionalData() {}
-
-mumble_version_t mumble_getAPIVersion() {
-    // This constant will always hold the API version that fits the included header files | Cette constante contiendra toujours la version de l'API qui correspond aux fichiers d'en-tête inclus
-    return MUMBLE_PLUGIN_API_VERSION;
-}
-
 // Register Mumble API functions | Enregistrer les fonctions de l'API Mumble
 void mumble_registerAPIFunctions(void* apiStruct) {
-    // Provided mumble_getAPIVersion returns MUMBLE_PLUGIN_API_VERSION, this cast will make sure | Pourvu que mumble_getAPIVersion retourne MUMBLE_PLUGIN_API_VERSION, ce cast s'assurera
-    // that the passed pointer will be cast to the proper type | que le pointeur passé sera casté vers le type approprié
     mumbleAPI = MUMBLE_API_CAST(apiStruct);
-}
-
-// Release Mumble resource | Libérer une ressource Mumble
-void mumble_releaseResource(const void* pointer) {
-    // As we never pass a resource to Mumble that needs releasing, this function should never | Comme nous ne passons jamais une ressource à Mumble qui nécessite une libération, cette fonction ne devrait jamais
-    // get called | être appelée
-    mumbleAPI.log(ownID, u8"Called mumble_releaseResource but expected that this never gets called -> Aborting");
-    abort();
 }
 
 // Get plugin name | Obtenir le nom du plugin
 struct MumbleStringWrapper mumble_getName() {
-    static const char* name = u8"Conan_exiles"; // Plugin name | Nom du plugin
+    static const char* name = u8"Conan_exiles";
 
-    struct MumbleStringWrapper wrapper = { 0 }; // Initialize wrapper structure | Initialiser la structure wrapper
-    wrapper.data = name; // Set name data | Définir les données du nom
-    wrapper.size = strlen(name); // Calculate name length | Calculer la longueur du nom
-    wrapper.needsReleasing = false; // No memory release needed | Aucune libération mémoire nécessaire
+    struct MumbleStringWrapper wrapper = { 0 };
+    wrapper.data = name;
+    wrapper.size = strlen(name);
+    wrapper.needsReleasing = false;
 
     return wrapper;
 }
 
 // Get plugin version | Obtenir la version du plugin
 mumble_version_t mumble_getVersion() {
-    mumble_version_t version = { 0 }; // Initialize version structure | Initialiser la structure de version
-    version.major = 4; // Major version number | Numéro de version majeure
-    version.minor = 0; // Minor version number | Numéro de version mineure
-    version.patch = 3; // Patch version number | Numéro de version de correctif
+    mumble_version_t version = { 0 };
+    version.major = 5;
+    version.minor = 1;
+    version.patch = 3;
 
     return version;
 }
 
 // Get plugin author information | Obtenir les informations de l'auteur du plugin
 struct MumbleStringWrapper mumble_getAuthor() {
-    static const char* author = u8"Creator's Discord : Dino_Rex"; // Author information | Informations de l'auteur
+    static const char* author = u8"Creator's Discord : Dino_Rex";
 
-    struct MumbleStringWrapper wrapper = { 0 }; // Initialize wrapper structure | Initialiser la structure wrapper
-    wrapper.data = author; // Set author data | Définir les données de l'auteur
-    wrapper.size = strlen(author); // Calculate author string length | Calculer la longueur de la chaîne auteur
-    wrapper.needsReleasing = false; // No memory release needed | Aucune libération mémoire nécessaire
+    struct MumbleStringWrapper wrapper = { 0 };
+    wrapper.data = author;
+    wrapper.size = strlen(author);
+    wrapper.needsReleasing = false;
 
     return wrapper;
 }
 
 // Get plugin description | Obtenir la description du plugin
 struct MumbleStringWrapper mumble_getDescription() {
-    static const char* description = u8"Creator's Discord : Dino_Rex Discord: https://discord.gg/tFBbQzmDaZ"; // Plugin description | Description du plugin
+    static const char* description = u8"Creator's Discord : Dino_Rex Discord: https://discord.gg/tFBbQzmDaZ";
 
-    struct MumbleStringWrapper wrapper = { 0 }; // Initialize wrapper structure | Initialiser la structure wrapper
-    wrapper.data = description; // Set description data | Définir les données de description
-    wrapper.size = strlen(description); // Calculate description string length | Calculer la longueur de la chaîne de description
-    wrapper.needsReleasing = false; // No memory release needed | Aucune libération mémoire nécessaire
+    struct MumbleStringWrapper wrapper = { 0 };
+    wrapper.data = description;
+    wrapper.size = strlen(description);
+    wrapper.needsReleasing = false;
 
     return wrapper;
 }
 
-// Return the plugin ID | Retourner l'ID du plugin
-static mumble_plugin_id_t mumble_getPluginID() {
-    return ownID; // Return stored plugin identifier | Retourner l'identifiant de plugin stocké
+uint32_t mumble_getFeatures() {
+    return MUMBLE_FEATURE_AUDIO;
 }
 
-// Called when the client has finished synchronizing with the server
-PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerSynchronized(mumble_connection_t connection) {
-    initializeChannelIDs();
+// Get API version | Obtenir la version de l'API
+mumble_version_t mumble_getAPIVersion() {
+    return MUMBLE_PLUGIN_API_VERSION;
+}
+
+
+// Return the plugin ID | Retourner l'ID du plugin
+static mumble_plugin_id_t mumble_getPluginID() {
+    return ownID;
 }
 
 PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerConnected(mumble_connection_t connection) {
+    isConnectedToServer = TRUE;
+    hubDescriptionAvailable = FALSE;
+    hubLimitsActive = FALSE;
+
     channelManagementActive = FALSE;
     hubChannelID = -1;
     ingameChannelID = -1;
     lastTargetChannel = -1;
     lastValidChannel = -1;
 
-    // NOUVEAU: Réinitialiser le système de voix
+    cleanupAudioVolumeStates();
+
+    cleanupAdaptivePlayerStates();
+    localPlayerPosition.x = localPlayerPosition.y = localPlayerPosition.z = 0.0f;
     cleanupPlayerMuteStates();
     memset(remotePlayersData, 0, sizeof(remotePlayersData));
     remotePlayerCount = 0;
     lastDistanceCheck = 0;
 
-    // NOUVEAU: Récupérer la distance maximale du nouveau serveur
-    maxAudioDistanceRetrieved = FALSE; // Forcer une nouvelle récupération
+    maxAudioDistanceRetrieved = FALSE;
     retrieveServerMaximumAudioDistance(FALSE);
     applyMaximumDistanceLimits();
 
     if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "Voice chat system initialized on connection with server distance limits");
+        mumbleAPI.log(ownID, "REAL adaptive volume system initialized - smooth real-time volume control active");
+    }
+
+    if (enableVoiceOverlay && enableDistanceMuting && hVoiceOverlay == NULL) {
+        createVoiceOverlay();
     }
 }
 
-// Called whenever any user enters a channel
+// Called when the client has finished synchronizing with the server | Appelé quand le client a fini de se synchroniser avec le serveur
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerSynchronized(mumble_connection_t connection) {
+    if (TEMP) {
+        mumbleAPI.log(ownID, "=== SERVER SYNCHRONIZED - APPLYING HUB SETTINGS IMMEDIATELY ===");
+    }
+
+    initializeChannelIDs();
+
+    Sleep(1000);
+    readHubDescription();
+
+    if (hubDescriptionAvailable) {
+        if (hubForceDistanceBasedMuting && !enableDistanceMuting) {
+            enableDistanceMuting = TRUE;
+            saveConfigurationChange("EnableDistanceMuting", L"true");
+            if (TEMP) {
+                mumbleAPI.log(ownID, "IMMEDIATE: Distance-based muting FORCED by server and SAVED");
+            }
+        }
+
+        if (hubForceAutomaticChannelSwitching && !enableAutomaticChannelChange) {
+            enableAutomaticChannelChange = TRUE;
+            saveConfigurationChange("EnableAutomaticChannelChange", L"true");
+            if (TEMP) {
+                mumbleAPI.log(ownID, "IMMEDIATE: Automatic channel switching FORCED by server and SAVED");
+            }
+        }
+
+        if (hubForcePositionalAudio && !enableAutoAudioSettings) {
+            enableAutoAudioSettings = TRUE;
+            if (TEMP) {
+                mumbleAPI.log(ownID, "IMMEDIATE: Positional audio FORCED by server");
+            }
+        }
+
+        validatePlayerDistances();
+
+        if (hConfigDialog && IsWindow(hConfigDialog)) {
+            CheckDlgButton(hConfigDialog, 201, enableDistanceMuting ? BST_CHECKED : BST_UNCHECKED);
+            CheckDlgButton(hConfigDialog, 203, enableAutomaticChannelChange ? BST_CHECKED : BST_UNCHECKED);
+            updateDynamicInterface();
+        }
+
+        if (enableAutomaticChannelChange && channelManagementActive) {
+            lastChannelCheck = 0;
+            Sleep(500);
+            manageChannelBasedOnCoordinates();
+        }
+
+        if (TEMP) {
+            char applyMsg[512];
+            snprintf(applyMsg, sizeof(applyMsg),
+                "IMMEDIATE APPLICATION COMPLETE:\n"
+                "  • AutoChannelChange: %s\n"
+                "  • DistanceMuting: %s\n"
+                "  • PositionalAudio: %s",
+                enableAutomaticChannelChange ? "ENABLED" : "disabled",
+                enableDistanceMuting ? "ENABLED" : "disabled",
+                enableAutoAudioSettings ? "ENABLED" : "disabled");
+            mumbleAPI.log(ownID, applyMsg);
+        }
+    }
+}
+
+// Receive complete positional data | Réception des données positionnelles complètes
+PLUGIN_EXPORT bool PLUGIN_CALLING_CONVENTION mumble_onReceiveData(mumble_connection_t connection,
+    mumble_userid_t sender,
+    const uint8_t* data,
+    size_t dataLength,
+    const char* dataID) {
+
+    // Detailed reception logging | Log détaillé de réception
+    if (enableLogGeneral) {
+        static ULONGLONG lastReceiveLog = 0;
+        ULONGLONG currentTime = GetTickCount64();
+        if (currentTime - lastReceiveLog > 1000) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "📦 RECEIVE: ID='%s' Size=%zu From=%u Time=%llu",
+                dataID ? dataID : "NULL", dataLength, sender, currentTime);
+            mumbleAPI.log(ownID, logMsg);
+            lastReceiveLog = currentTime;
+        }
+    }
+
+    if (dataID && strcmp(dataID, "ConanExiles_CompletePositional") == 0) {
+        if (dataLength == sizeof(CompletePositionalData)) {
+            const CompletePositionalData* receivedData = (const CompletePositionalData*)data;
+
+            // Critical raw data logging | Log critique des données reçues brutes
+            if (enableLogGeneral) {
+                static ULONGLONG lastDataLog = 0;
+                ULONGLONG currentTime = GetTickCount64();
+                if (currentTime - lastDataLog > 1000) {
+                    char logMsg[512];
+                    snprintf(logMsg, sizeof(logMsg),
+                        "📥 RAW DATA RECEIVED: Player='%s' Pos(%.6f,%.6f,%.6f) Dir(%.6f,%.6f,%.6f) VoiceDist=%.6f",
+                        receivedData->playerName, receivedData->x, receivedData->y, receivedData->z,
+                        receivedData->dirX, receivedData->dirY, receivedData->dirZ, receivedData->voiceDistance);
+                    mumbleAPI.log(ownID, logMsg);
+                    lastDataLog = currentTime;
+                }
+            }
+
+            calculateLocalPositionalAudio(receivedData, sender);
+            return true;
+        }
+        else {
+            if (enableLogGeneral) {
+                char errorMsg[256];
+                snprintf(errorMsg, sizeof(errorMsg),
+                    "❌ SIZE MISMATCH: Expected %zu bytes, got %zu bytes from user %u",
+                    sizeof(CompletePositionalData), dataLength, sender);
+                mumbleAPI.log(ownID, errorMsg);
+            }
+        }
+    }
+
+    return false;
+}
+
+// Called whenever any user enters a channel | Appelé quand un utilisateur entre dans un canal
 PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onChannelEntered(mumble_connection_t connection,
     mumble_userid_t userID,
     mumble_channelid_t previousChannelID,
     mumble_channelid_t newChannelID) {
-    if (!enableAutomaticChannelChange) return; // Check if automatic change is enabled | Vérifier si le changement automatique est activé
+    if (!enableAutomaticChannelChange) return;
     if (!channelManagementActive) return;
 
-    // Check if it's the local user | Vérifier si c'est l'utilisateur local
     mumble_userid_t localUserID;
     if (mumbleAPI.getLocalUserID(ownID, connection, &localUserID) != MUMBLE_STATUS_OK) {
         return;
     }
 
     if (userID == localUserID) {
-
         if (!coordinatesValid) {
-            // If invalid coordinates and not in hub, send back to hub | Si coordonnées invalides et pas dans hub, renvoyer vers hub
             if (newChannelID != hubChannelID && hubChannelID != -1) {
                 Sleep(50);
                 mumbleAPI.requestUserMove(ownID, connection, localUserID, hubChannelID, NULL);
             }
         }
-
     }
 }
 
-// Nettoyage lors de la sortie d'un canal
+// Channel exit cleanup | Nettoyage lors de la sortie d'un canal
 PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onChannelExited(mumble_connection_t connection,
     mumble_userid_t userID,
     mumble_channelid_t channelID) {
 
-    // Si c'est un autre utilisateur qui quitte, nettoyer ses données
-    if (userID != 0) { // 0 = utilisateur local
+    if (userID != 0) {
         for (size_t i = 0; i < playerMuteStateCount; i++) {
             if (playerMuteStates[i].userID == userID) {
-                // Décaler les éléments pour combler le trou
                 for (size_t j = i; j < playerMuteStateCount - 1; j++) {
                     playerMuteStates[j] = playerMuteStates[j + 1];
                 }
@@ -3599,30 +5713,58 @@ PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onChannelExited(mumble_conne
             }
         }
 
-        // Nettoyer aussi les données remote
         for (size_t i = 0; i < remotePlayerCount; i++) {
-            // Note: On ne peut pas facilement associer userID avec playerName, 
-            // donc on fait un nettoyage périodique séparé
+            // Note: periodic cleanup handled separately | Note: nettoyage périodique géré séparément
         }
     }
 }
 
+// Complete cleanup on disconnection | Nettoyage complet à la déconnexion
+PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerDisconnected(mumble_connection_t connection) {
+    isConnectedToServer = FALSE;
+    hubDescriptionAvailable = FALSE;
+    hubLimitsActive = FALSE;
+
+    channelManagementActive = FALSE;
+    lastValidChannel = -1;
+
+    // Clean audio system AND filters | Nettoyer le système audio ET les filtres
+    cleanupAudioVolumeStates();
+
+    cleanupAdaptivePlayerStates();
+    cleanupPlayerMuteStates();
+    memset(remotePlayersData, 0, sizeof(remotePlayersData));
+    remotePlayerCount = 0;
+    memset(localVoiceData.playerName, 0, sizeof(localVoiceData.playerName));
+    lastVoiceDataSent = 0;
+    lastDistanceCheck = 0;
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "REAL adaptive volume system reset with low-pass filtering - audio processing restored");
+    }
+    destroyVoiceOverlay();
+}
+
 void mumble_shutdown() {
+    overlayThreadRunning = FALSE;
     removeKeyMonitoring();
 
-    // NOUVEAU: Nettoyer le système de voix
+    // Voice system cleanup | Nettoyage du système de voix
     remotePlayerCount = 0;
-    memset(&localVoiceData, 0, sizeof(VoiceData));
+    memset(remotePlayersData, 0, sizeof(CompletePositionalData));
     memset(remotePlayersData, 0, sizeof(remotePlayersData));
-    cleanupPlayerMuteStates(); // Nettoyer les états de mute
+    cleanupPlayerMuteStates();
 
-    // Disable all functions
-    enableSetMaximumAudioDistance = FALSE;
-    enableCheckPlayerZone = FALSE;
-    enableCheckVersionThread = FALSE;
-    enableStartVersionCheck = FALSE;
-    enableFindProcessId = FALSE;
-    enableFindBaseAddress = FALSE;
-    enableReadMemoryValue = FALSE;
-    enableGetPlayerCoordinates = FALSE;
+    // Free cached hub description if any | Libérer la description mise en cache
+    if (lastHubDescriptionCache) {
+        free(lastHubDescriptionCache);
+        lastHubDescriptionCache = NULL;
+        if (enableLogGeneral) mumbleAPI.log(ownID, "Freed cached hub description");
+    }
+}
+
+// Release Mumble resource | Libérer une ressource Mumble
+void mumble_releaseResource(const void* pointer) {
+    mumbleAPI.log(ownID, u8"Called mumble_releaseResource but expected that this never gets called -> Aborting");
+    abort();
 }

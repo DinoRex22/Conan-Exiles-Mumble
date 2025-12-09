@@ -105,6 +105,42 @@ typedef struct {
 } PlayerMuteState;
 
 // ============================================================================
+// VOICE RANGE PRESETS | PRESETS DE PORTÉE VOCALE
+// ============================================================================
+
+#define MAX_VOICE_PRESETS 10
+#define PRESET_NAME_MAX_LENGTH 64
+
+// Voice range preset structure | Structure de preset de portée vocale
+typedef struct {
+    char name[PRESET_NAME_MAX_LENGTH];
+    float whisperDistance;
+    float normalDistance;
+    float shoutDistance;
+    BOOL isUsed;
+} VoiceRangePreset;
+
+// Voice preset global variables | Variables globales pour les presets vocaux
+extern VoiceRangePreset voicePresets[MAX_VOICE_PRESETS];
+extern int currentPresetIndex;
+extern HWND hCategoryPresets;
+
+// Voice preset functions | Fonctions pour les presets vocaux
+static void initializeVoicePresets(void);
+static void saveVoicePreset(int presetIndex, const char* presetName);
+static void loadVoicePreset(int presetIndex);
+static BOOL renameVoicePreset(int presetIndex, const char* newName);
+static void savePresetsToConfigFile(void);
+static void loadPresetsFromConfigFile(void);
+
+// Voice preset interface functions | Fonctions d'interface pour les presets vocaux
+static void showPresetSaveDialog(void);
+static LRESULT CALLBACK PresetSaveDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static LRESULT CALLBACK PresetRenameDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static void createPresetsCategory(void);
+static void updatePresetLabels(void);
+
+// ============================================================================
 // EXTERN VARIABLES
 // ============================================================================
 
@@ -344,5 +380,7 @@ static void updateChannelSwitchingMessage(void);
 
 // Update positional audio message
 static void updatePositionalAudioMessage(void);
+
+static void DrawButtonWithBitmap(LPDRAWITEMSTRUCT lpDIS);
 
 #endif // PLUGIN_H

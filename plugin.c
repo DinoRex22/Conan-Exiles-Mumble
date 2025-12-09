@@ -31,6 +31,7 @@ All other terms and conditions of the Mozilla Public License 2.0 remain unchange
 
 #include "MumblePlugin_v_1_0_x.h"
 #include "plugin.h"
+#include "resource.h"
 #include <windows.h>
 #include <string.h>
 #include <stdio.h>
@@ -44,11 +45,25 @@ All other terms and conditions of the Mozilla Public License 2.0 remain unchange
 #include <shobjidl.h>
 #include <locale.h>
 #include <ctype.h>
+#include <commctrl.h>
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "Msimg32.lib")
 
+#ifndef IDB_CHECKMARK
+#define IDB_CHECKMARK 103
+#endif
 
 // ============================================================================
 // DÉFINITIONS DES VARIABLES GLOBALES | GLOBAL VARIABLE DEFINITIONS
 // ============================================================================
+
+// Background image | Image de fond
+HBITMAP hBackgroundBitmap = NULL;
+HBITMAP hBackgroundAdvancedBitmap = NULL;
+HBITMAP hBackgroundPresetsBitmap = NULL;
+HBITMAP hBackgroundSavePresetBitmap = NULL;
+HBITMAP hBackgroundRenamePresetBitmap = NULL;
+static BOOL backgroundDrawn = FALSE;
 
 // Plugin control variables | Variables de contrôle du plugin
 BOOL enableGetPlayerCoordinates = TRUE;
@@ -109,12 +124,24 @@ HWND hWhisperKeyEdit, hNormalKeyEdit, hShoutKeyEdit, hConfigKeyEdit;
 HWND hWhisperButton, hNormalButton, hShoutButton, hConfigButton;
 HWND hEnableDistanceMutingCheck, hEnableAutomaticChannelChangeCheck;
 HWND hDistanceWhisperEdit, hDistanceNormalEdit, hDistanceShoutEdit;
-HWND hSavedPathEdit, hSavedPathButton;
+HWND hSavedPathEdit, hSavedPathButton, hSavedPathBg;
+HBITMAP hPathBoxBitmap = NULL;
 HWND hCategoryPatch, hCategoryAdvanced;
 HWND hEnableVoiceToggleCheck, hVoiceToggleKeyEdit, hVoiceToggleButton;
+VoiceRangePreset voicePresets[MAX_VOICE_PRESETS];
+int currentPresetIndex = -1;
+HWND hCategoryPresets = NULL;
+HWND hPresetLabels[MAX_VOICE_PRESETS] = { NULL };
+HWND hPresetLoadButtons[MAX_VOICE_PRESETS] = { NULL };
+HWND hPresetRenameButtons[MAX_VOICE_PRESETS] = { NULL };
+HWND hPresetSaveDialog = NULL;
+HWND hPresetRenameDialog = NULL;
+char renameBuffer[PRESET_NAME_MAX_LENGTH] = "";
+int renamePresetIndex = -1;
 HWND hStatusMessage = NULL;
 HWND hDistanceLimitMessage = NULL;
 HFONT hFont = NULL, hFontBold = NULL, hFontLarge = NULL, hFontEmoji = NULL;
+HFONT hPathFont = NULL;
 
 // Interface message controls | Contrôles de messages de l'interface
 HWND hDistanceWhisperMessage = NULL;
@@ -132,13 +159,9 @@ int currentCategory = 1;
 BOOL isCapturingKey = FALSE;
 int captureKeyTarget = 0;
 wchar_t savedPath[MAX_PATH] = L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved";
+wchar_t displayedPathText[MAX_PATH] = L"";
 BOOL isUpdatingInterface = FALSE;
 ULONGLONG lastInterfaceUpdate = 0;
-
-// Interface text constants | Constantes de texte de l'interface
-const wchar_t* infoText1 = L"\U0001F4A1 Please provide the path to your Conan Exiles folder.";
-const wchar_t* infoText2 = L"\U0001F4C2 Example: C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles";
-const wchar_t* infoText3 = L"\u26A0\uFE0F The 'Saved' folder must exist inside 'ConanSandbox' for the plugin to work.";
 
 // Voice toggle variables | Variables pour le toggle de voix
 int voiceToggleKey = 84;
@@ -193,8 +216,8 @@ ULONGLONG lastKeyCheck = 0;
 
 // Voice distance settings | Paramètres de distance vocale
 float distanceWhisper = 2.0f;
-float distanceNormal = 10.0f;
-float distanceShout = 15.0f;
+float distanceNormal = 15.0f;
+float distanceShout = 50.0f;
 
 // Voice features | Fonctionnalités vocales
 BOOL enableDistanceMuting = FALSE;
@@ -421,9 +444,6 @@ static void loadVoiceDistancesFromConfig() {
         }
         fclose(f);
     }
-
-    // CORRECTION: NE PAS appeler applyMaximumDistanceLimits() ici
-    // Cette fonction écrasait les valeurs chargées depuis le fichier
 
     if (enableLogConfig) {
         char logMsg[256];
@@ -679,6 +699,313 @@ static void saveVoiceSettings() {
     }
 }
 
+// Initialize voice presets with default names | Initialiser les presets avec des noms par défaut
+static void initializeVoicePresets(void) {
+    for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+        snprintf(voicePresets[i].name, PRESET_NAME_MAX_LENGTH, "Save %d", i + 1);
+        voicePresets[i].whisperDistance = 2.0f;
+        voicePresets[i].normalDistance = 10.0f;
+        voicePresets[i].shoutDistance = 15.0f;
+        voicePresets[i].isUsed = FALSE;
+    }
+
+    if (enableLogConfig) {
+        mumbleAPI.log(ownID, "Voice presets initialized with default values");
+    }
+}
+
+// Save current voice ranges to preset | Sauvegarder les portées vocales actuelles dans un preset
+static void saveVoicePreset(int presetIndex, const char* presetName) {
+    if (presetIndex < 0 || presetIndex >= MAX_VOICE_PRESETS) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Invalid preset index for save");
+        }
+        return;
+    }
+
+    // Save current distances | Sauvegarder les distances actuelles
+    voicePresets[presetIndex].whisperDistance = distanceWhisper;
+    voicePresets[presetIndex].normalDistance = distanceNormal;
+    voicePresets[presetIndex].shoutDistance = distanceShout;
+    voicePresets[presetIndex].isUsed = TRUE;
+
+    // Update name if provided | Mettre à jour le nom si fourni
+    if (presetName && strlen(presetName) > 0) {
+        strncpy_s(voicePresets[presetIndex].name, PRESET_NAME_MAX_LENGTH, presetName, _TRUNCATE);
+    }
+
+    currentPresetIndex = presetIndex;
+
+    // Save to config file | Sauvegarder dans le fichier de configuration
+    savePresetsToConfigFile();
+
+    // Update interface labels | Mettre à jour les labels d'interface
+    if (hConfigDialog && IsWindow(hConfigDialog)) {
+        updatePresetLabels();
+    }
+
+    if (enableLogConfig) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg),
+            "Voice preset saved: [%d] '%s' - Whisper:%.1f Normal:%.1f Shout:%.1f",
+            presetIndex, voicePresets[presetIndex].name,
+            distanceWhisper, distanceNormal, distanceShout);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    // Show confirmation | Afficher confirmation
+    char confirmMsg[256];
+    snprintf(confirmMsg, sizeof(confirmMsg),
+        "✅ Preset saved: '%s'", voicePresets[presetIndex].name);
+    displayInChat(confirmMsg);
+}
+
+// Load voice ranges from preset | Charger les portées vocales depuis un preset
+static void loadVoicePreset(int presetIndex) {
+    if (presetIndex < 0 || presetIndex >= MAX_VOICE_PRESETS) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Invalid preset index for load");
+        }
+        return;
+    }
+
+    if (!voicePresets[presetIndex].isUsed) {
+        if (enableLogConfig) {
+            char logMsg[128];
+            snprintf(logMsg, sizeof(logMsg), "Preset %d is empty - nothing to load", presetIndex);
+            mumbleAPI.log(ownID, logMsg);
+        }
+
+        MessageBoxW(hConfigDialog, L"This preset slot is empty.", L"Empty Preset", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    // Save current voice mode | Sauvegarder le mode vocal actuel
+    float currentVoiceDistance = localVoiceData.voiceDistance;
+
+    // Load distances from preset | Charger les distances depuis le preset
+    distanceWhisper = voicePresets[presetIndex].whisperDistance;
+    distanceNormal = voicePresets[presetIndex].normalDistance;
+    distanceShout = voicePresets[presetIndex].shoutDistance;
+
+    currentPresetIndex = presetIndex;
+
+    // Update interface if open | Mettre à jour l'interface si ouverte
+    if (hConfigDialog && IsWindow(hConfigDialog)) {
+        isUpdatingInterface = TRUE;
+
+        wchar_t whisperText[32], normalText[32], shoutText[32];
+        swprintf(whisperText, 32, L"%.1f", distanceWhisper);
+        swprintf(normalText, 32, L"%.1f", distanceNormal);
+        swprintf(shoutText, 32, L"%.1f", distanceShout);
+
+        if (hDistanceWhisperEdit) SetWindowTextW(hDistanceWhisperEdit, whisperText);
+        if (hDistanceNormalEdit) SetWindowTextW(hDistanceNormalEdit, normalText);
+        if (hDistanceShoutEdit) SetWindowTextW(hDistanceShoutEdit, shoutText);
+
+        isUpdatingInterface = FALSE;
+
+        updateDynamicInterface();
+    }
+
+    // Preserve voice mode | Préserver le mode vocal
+    if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+        fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+        localVoiceData.voiceDistance = distanceWhisper;
+    }
+    else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+        localVoiceData.voiceDistance = distanceShout;
+    }
+    else {
+        localVoiceData.voiceDistance = distanceNormal;
+    }
+
+    // Apply changes | Appliquer les changements
+    saveVoiceSettings();
+    applyDistanceToAllPlayers();
+
+    if (enableLogConfig) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg),
+            "Voice preset loaded: [%d] '%s' - Whisper:%.1f Normal:%.1f Shout:%.1f",
+            presetIndex, voicePresets[presetIndex].name,
+            distanceWhisper, distanceNormal, distanceShout);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    // Show confirmation message | Afficher message de confirmation
+    char confirmMsg[256];
+    snprintf(confirmMsg, sizeof(confirmMsg),
+        "✅ Preset loaded: '%s'", voicePresets[presetIndex].name);
+    displayInChat(confirmMsg);
+}
+
+// Rename voice preset | Renommer un preset vocal
+static BOOL renameVoicePreset(int presetIndex, const char* newName) {
+    if (presetIndex < 0 || presetIndex >= MAX_VOICE_PRESETS) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Invalid preset index for rename");
+        }
+        return FALSE;
+    }
+
+    if (!newName || strlen(newName) == 0) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Empty name provided for rename");
+        }
+        return FALSE;
+    }
+
+    // ✅ VÉRIFIER LA LONGUEUR (10 caractères max)
+    if (strlen(newName) > 15) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Name too long (max 10 characters)");
+        }
+        return FALSE;
+    }
+
+    char oldName[PRESET_NAME_MAX_LENGTH];
+    strncpy_s(oldName, PRESET_NAME_MAX_LENGTH, voicePresets[presetIndex].name, _TRUNCATE);
+
+    // Update name | Mettre à jour le nom
+    strncpy_s(voicePresets[presetIndex].name, PRESET_NAME_MAX_LENGTH, newName, _TRUNCATE);
+
+    // Save to config | Sauvegarder dans la configuration
+    savePresetsToConfigFile();
+
+    // ✅ MISE À JOUR IMMÉDIATE DE L'INTERFACE (sans fermer/rouvrir)
+    if (hConfigDialog && IsWindow(hConfigDialog)) {
+        // Forcer la mise à jour des labels de presets
+        updatePresetLabels();
+
+        // Forcer le redessin de la zone des presets
+        RECT presetArea;
+        presetArea.left = 40;
+        presetArea.top = 200;
+        presetArea.right = 560;
+        presetArea.bottom = 600;
+        InvalidateRect(hConfigDialog, &presetArea, TRUE);
+        UpdateWindow(hConfigDialog);
+    }
+
+    if (enableLogConfig) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg),
+            "Preset renamed: [%d] '%s' -> '%s'",
+            presetIndex, oldName, newName);
+        mumbleAPI.log(ownID, logMsg);
+    }
+
+    return TRUE;
+}
+
+// Save presets to configuration file | Sauvegarder les presets dans le fichier de configuration
+static void savePresetsToConfigFile(void) {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) return;
+
+    wchar_t presetFile[MAX_PATH];
+    swprintf(presetFile, MAX_PATH, L"%s\\voice_presets.cfg", configFolder);
+
+    FILE* file = NULL;
+    errno_t err = _wfopen_s(&file, presetFile, L"w");
+    if (err != 0 || !file) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Failed to create voice presets config file");
+        }
+        return;
+    }
+
+    // Write current preset index | Écrire l'index du preset actuel
+    fwprintf(file, L"CurrentPreset=%d\n\n", currentPresetIndex);
+
+    // Write all presets | Écrire tous les presets
+    for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+        wchar_t wName[PRESET_NAME_MAX_LENGTH];
+        size_t converted = 0;
+        mbstowcs_s(&converted, wName, PRESET_NAME_MAX_LENGTH, voicePresets[i].name, _TRUNCATE);
+
+        fwprintf(file, L"[Preset%d]\n", i);
+        fwprintf(file, L"Name=%s\n", wName);
+        fwprintf(file, L"Whisper=%.1f\n", voicePresets[i].whisperDistance);
+        fwprintf(file, L"Normal=%.1f\n", voicePresets[i].normalDistance);
+        fwprintf(file, L"Shout=%.1f\n", voicePresets[i].shoutDistance);
+        fwprintf(file, L"IsUsed=%s\n\n", voicePresets[i].isUsed ? L"true" : L"false");
+    }
+
+    fclose(file);
+
+    if (enableLogConfig) {
+        mumbleAPI.log(ownID, "Voice presets saved to config file");
+    }
+}
+
+// Load presets from configuration file | Charger les presets depuis le fichier de configuration
+static void loadPresetsFromConfigFile(void) {
+    wchar_t* configFolder = getConfigFolderPath();
+    if (!configFolder) return;
+
+    wchar_t presetFile[MAX_PATH];
+    swprintf(presetFile, MAX_PATH, L"%s\\voice_presets.cfg", configFolder);
+
+    FILE* file = NULL;
+    errno_t err = _wfopen_s(&file, presetFile, L"r");
+    if (err != 0 || !file) {
+        // File doesn't exist, initialize with defaults | Fichier inexistant, initialiser avec valeurs par défaut
+        initializeVoicePresets();
+        return;
+    }
+
+    wchar_t line[512];
+    int currentPreset = -1;
+
+    while (fgetws(line, 512, file)) {
+        // Remove trailing newline | Supprimer le retour à la ligne
+        wchar_t* nl = wcschr(line, L'\n');
+        if (nl) *nl = L'\0';
+        wchar_t* cr = wcschr(line, L'\r');
+        if (cr) *cr = L'\0';
+
+        // Parse current preset index | Parser l'index du preset actuel
+        if (wcsncmp(line, L"CurrentPreset=", 14) == 0) {
+            currentPresetIndex = _wtoi(line + 14);
+        }
+        // Parse preset section | Parser la section preset
+        else if (wcsncmp(line, L"[Preset", 7) == 0) {
+            wchar_t* endBracket = wcschr(line, L']');
+            if (endBracket) {
+                *endBracket = L'\0';
+                currentPreset = _wtoi(line + 7);
+            }
+        }
+        // Parse preset properties | Parser les propriétés du preset
+        else if (currentPreset >= 0 && currentPreset < MAX_VOICE_PRESETS) {
+            if (wcsncmp(line, L"Name=", 5) == 0) {
+                size_t converted = 0;
+                wcstombs_s(&converted, voicePresets[currentPreset].name, PRESET_NAME_MAX_LENGTH, line + 5, _TRUNCATE);
+            }
+            else if (wcsncmp(line, L"Whisper=", 8) == 0) {
+                voicePresets[currentPreset].whisperDistance = (float)_wtof(line + 8);
+            }
+            else if (wcsncmp(line, L"Normal=", 7) == 0) {
+                voicePresets[currentPreset].normalDistance = (float)_wtof(line + 7);
+            }
+            else if (wcsncmp(line, L"Shout=", 6) == 0) {
+                voicePresets[currentPreset].shoutDistance = (float)_wtof(line + 6);
+            }
+            else if (wcsncmp(line, L"IsUsed=", 7) == 0) {
+                voicePresets[currentPreset].isUsed = (wcscmp(line + 7, L"true") == 0);
+            }
+        }
+    }
+
+    fclose(file);
+
+    if (enableLogConfig) {
+        mumbleAPI.log(ownID, "Voice presets loaded from config file");
+    }
+}
+
 // Write full Saved path to config file | Écriture du chemin complet Saved dans le fichier de configuration
 static void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhisper, const wchar_t* distNormal, const wchar_t* distShout) {
     wchar_t* configFolder = getConfigFolderPath();
@@ -689,8 +1016,23 @@ static void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* dis
     wchar_t configFile[MAX_PATH];
     swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
 
+    // Construire le chemin COMPLET pour l'enregistrement (avec \ConanSandbox\Saved)
     wchar_t savedPathFull[MAX_PATH];
-    swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
+
+    // Si displayedPathText contient le chemin, ajouter \ConanSandbox\Saved
+    if (wcslen(displayedPathText) > 0) {
+        // displayedPathText = C:\...\Conan Exiles (SANS \ConanSandbox\Saved)
+        // Construire le chemin COMPLET = C:\...\Conan Exiles\ConanSandbox\Saved
+        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", displayedPathText);
+    }
+    // Sinon, construire depuis gameFolder (fallback)
+    else if (gameFolder && wcslen(gameFolder) > 0) {
+        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
+    }
+    else {
+        // Valeur par défaut si rien n'est disponible
+        wcscpy_s(savedPathFull, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+    }
 
     // Save current voice mode before modifying distances | Sauvegarder le mode de voix actuel AVANT de modifier les distances
     float currentVoiceDistance = localVoiceData.voiceDistance;
@@ -3256,6 +3598,10 @@ static void forceWindowToForegroundNoMouse(HWND hwnd) {
 static void ShowCategoryControls(int category) {
     currentCategory = category;
 
+    // ✅ DÉSACTIVER LE REDESSIN PENDANT LA TRANSITION
+    SendMessage(hConfigDialog, WM_SETREDRAW, FALSE, 0);
+
+    // Get all control handles | Récupérer tous les handles de contrôles
     HWND hExplanation1 = GetDlgItem(hConfigDialog, 401);
     HWND hExplanation2 = GetDlgItem(hConfigDialog, 402);
     HWND hExplanation3 = GetDlgItem(hConfigDialog, 403);
@@ -3273,16 +3619,151 @@ static void ShowCategoryControls(int category) {
     HWND hDistanceNormalLabel = GetDlgItem(hConfigDialog, 510);
     HWND hDistanceShoutLabel = GetDlgItem(hConfigDialog, 511);
     HWND hToggleLabel = GetDlgItem(hConfigDialog, 514);
+    HWND hDistanceMutingLabel = GetDlgItem(hConfigDialog, 2001);
+    HWND hChannelSwitchingLabel = GetDlgItem(hConfigDialog, 2002);
+    HWND hVoiceToggleLabel = GetDlgItem(hConfigDialog, 2003);
 
-    if (category == 1) { // Patch Configuration
-        if (hExplanation1) ShowWindow(hExplanation1, SW_SHOW);
-        if (hExplanation2) ShowWindow(hExplanation2, SW_SHOW);
-        if (hExplanation3) ShowWindow(hExplanation3, SW_SHOW);
-        if (hPathLabel) ShowWindow(hPathLabel, SW_SHOW);
+    // Preset category controls | Contrôles de la catégorie presets
+    HWND hPresetTitle = GetDlgItem(hConfigDialog, 800);
+    HWND hPresetInstructions = GetDlgItem(hConfigDialog, 801);
+
+    // ✅ RÉCUPÉRER TOUS LES BOUTONS UNE SEULE FOIS
+    HWND hSaveConfigButton = GetDlgItem(hConfigDialog, 1);       // Save Configuration (Patch + Advanced)
+    HWND hSaveVoiceRangeButton = GetDlgItem(hConfigDialog, 11); // Save Voice Range (Advanced uniquement)
+    HWND hCancelButton = GetDlgItem(hConfigDialog, 2);          // Cancel (jamais affiché)
+
+    if (category == 1) { // ========== PATCH CONFIGURATION ==========
+        // Afficher catégorie 1
+        if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_SHOW);
         if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_SHOW);
         if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_SHOW);
 
-        // Hide advanced options | Masquer les options avancées
+        // Masquer catégories 2 et 3 (batch)
+        HWND hideControls[] = {
+            hPluginLabel, hKeyLabel, hWhisperLabel, hNormalLabel, hShoutLabel,
+            hConfigLabel, hConfigExplain, hDistanceLabel, hDistanceWhisperLabel,
+            hDistanceNormalLabel, hDistanceShoutLabel, hToggleLabel,
+            hWhisperKeyEdit, hWhisperButton, hNormalKeyEdit, hNormalButton,
+            hShoutKeyEdit, hShoutButton, hConfigKeyEdit, hConfigButton,
+            hEnableDistanceMutingCheck, hEnableAutomaticChannelChangeCheck,
+            hEnableVoiceToggleCheck, hVoiceToggleKeyEdit, hVoiceToggleButton,
+            hDistanceWhisperEdit, hDistanceNormalEdit, hDistanceShoutEdit,
+            hDistanceMutingLabel, hChannelSwitchingLabel, hVoiceToggleLabel,
+            hDistanceWhisperMessage, hDistanceNormalMessage, hDistanceShoutMessage,
+            hDistanceMutingMessage, hChannelSwitchingMessage, hPositionalAudioMessage,
+            hPresetTitle, hPresetInstructions
+        };
+
+        for (int i = 0; i < sizeof(hideControls) / sizeof(HWND); i++) {
+            if (hideControls[i]) ShowWindow(hideControls[i], SW_HIDE);
+        }
+
+        // Masquer presets
+        for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+            if (hPresetLabels[i]) ShowWindow(hPresetLabels[i], SW_HIDE);
+            if (hPresetLoadButtons[i]) ShowWindow(hPresetLoadButtons[i], SW_HIDE);
+            if (hPresetRenameButtons[i]) ShowWindow(hPresetRenameButtons[i], SW_HIDE);
+        }
+
+        // Boutons
+        if (hSaveConfigButton) {
+            ShowWindow(hSaveConfigButton, SW_SHOW);
+            // S'assurer que le bouton est au-dessus après redraw
+            SetWindowPos(hSaveConfigButton, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        if (hSaveVoiceRangeButton) {
+            ShowWindow(hSaveVoiceRangeButton, SW_HIDE);
+        }
+        if (hCancelButton) ShowWindow(hCancelButton, SW_HIDE);
+    }
+    else if (category == 2) { // ========== ADVANCED OPTIONS ==========
+        if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_HIDE);
+        // Hide patch controls | Masquer contrôles patch
+        if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
+        if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
+        if (hExplanation3) ShowWindow(hExplanation3, SW_HIDE);
+        if (hPathLabel) ShowWindow(hPathLabel, SW_HIDE);
+        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_HIDE);
+        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_HIDE);
+
+        // Show advanced options | Afficher options avancées
+        if (hPluginLabel) ShowWindow(hPluginLabel, SW_SHOW);
+        if (hKeyLabel) ShowWindow(hKeyLabel, SW_SHOW);
+        if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_SHOW);
+        if (hNormalLabel) ShowWindow(hNormalLabel, SW_SHOW);
+        if (hShoutLabel) ShowWindow(hShoutLabel, SW_SHOW);
+        if (hConfigLabel) ShowWindow(hConfigLabel, SW_SHOW);
+        if (hConfigExplain) ShowWindow(hConfigExplain, SW_SHOW);
+        if (hDistanceLabel) ShowWindow(hDistanceLabel, SW_SHOW);
+        if (hDistanceWhisperLabel) ShowWindow(hDistanceWhisperLabel, SW_SHOW);
+        if (hDistanceNormalLabel) ShowWindow(hDistanceNormalLabel, SW_SHOW);
+        if (hDistanceShoutLabel) ShowWindow(hDistanceShoutLabel, SW_SHOW);
+        if (hWhisperKeyEdit) ShowWindow(hWhisperKeyEdit, SW_SHOW);
+        if (hWhisperButton) ShowWindow(hWhisperButton, SW_SHOW);
+        if (hNormalKeyEdit) ShowWindow(hNormalKeyEdit, SW_SHOW);
+        if (hNormalButton) ShowWindow(hNormalButton, SW_SHOW);
+        if (hShoutKeyEdit) ShowWindow(hShoutKeyEdit, SW_SHOW);
+        if (hShoutButton) ShowWindow(hShoutButton, SW_SHOW);
+        if (hConfigKeyEdit) ShowWindow(hConfigKeyEdit, SW_SHOW);
+        if (hConfigButton) ShowWindow(hConfigButton, SW_SHOW);
+        if (hEnableDistanceMutingCheck) ShowWindow(hEnableDistanceMutingCheck, SW_SHOW);
+        if (hEnableAutomaticChannelChangeCheck) ShowWindow(hEnableAutomaticChannelChangeCheck, SW_SHOW);
+        if (hDistanceWhisperEdit) ShowWindow(hDistanceWhisperEdit, SW_SHOW);
+        if (hDistanceNormalEdit) ShowWindow(hDistanceNormalEdit, SW_SHOW);
+        if (hDistanceShoutEdit) ShowWindow(hDistanceShoutEdit, SW_SHOW);
+        if (hEnableVoiceToggleCheck) ShowWindow(hEnableVoiceToggleCheck, SW_SHOW);
+        if (hVoiceToggleKeyEdit) ShowWindow(hVoiceToggleKeyEdit, SW_SHOW);
+        if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_SHOW);
+        if (hToggleLabel) ShowWindow(hToggleLabel, SW_SHOW);
+        if (hDistanceMutingLabel) ShowWindow(hDistanceMutingLabel, SW_SHOW);
+        if (hChannelSwitchingLabel) ShowWindow(hChannelSwitchingLabel, SW_SHOW);
+        if (hVoiceToggleLabel) ShowWindow(hVoiceToggleLabel, SW_SHOW);
+
+        // Show messages | Afficher messages
+        if (hDistanceWhisperMessage) ShowWindow(hDistanceWhisperMessage, SW_SHOW);
+        if (hDistanceNormalMessage) ShowWindow(hDistanceNormalMessage, SW_SHOW);
+        if (hDistanceShoutMessage) ShowWindow(hDistanceShoutMessage, SW_SHOW);
+        if (hDistanceMutingMessage) ShowWindow(hDistanceMutingMessage, SW_SHOW);
+        if (hChannelSwitchingMessage) ShowWindow(hChannelSwitchingMessage, SW_SHOW);
+        if (hPositionalAudioMessage) ShowWindow(hPositionalAudioMessage, SW_SHOW);
+
+        updateDynamicInterface();
+
+        // Hide preset controls | Masquer contrôles presets
+        if (hPresetTitle) ShowWindow(hPresetTitle, SW_HIDE);
+        if (hPresetInstructions) ShowWindow(hPresetInstructions, SW_HIDE);
+        for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+            if (hPresetLabels[i]) ShowWindow(hPresetLabels[i], SW_HIDE);
+            if (hPresetLoadButtons[i]) ShowWindow(hPresetLoadButtons[i], SW_HIDE);
+            if (hPresetRenameButtons[i]) ShowWindow(hPresetRenameButtons[i], SW_HIDE);
+        }
+
+        // ✅ BOUTONS POUR CATÉGORIE 2 : Save Voice Range + Save Configuration (PAS Cancel)
+        if (hSaveConfigButton) {
+            ShowWindow(hSaveConfigButton, SW_SHOW);
+            SetWindowPos(hSaveConfigButton, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        if (hSaveVoiceRangeButton) {
+            ShowWindow(hSaveVoiceRangeButton, SW_SHOW);
+            // Forcer Z-order au-dessus (résout "partiellement visible / coupé")
+            SetWindowPos(hSaveVoiceRangeButton, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        if (hCancelButton) ShowWindow(hCancelButton, SW_SHOW);
+    }
+    else if (category == 3) { // ========== VOICE RANGE PRESETS ==========
+        // Hide patch controls | Masquer contrôles patch
+        if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_HIDE);
+        if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
+        if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
+        if (hExplanation3) ShowWindow(hExplanation3, SW_HIDE);
+        if (hPathLabel) ShowWindow(hPathLabel, SW_HIDE);
+        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_HIDE);
+        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_HIDE);
+        if (hDistanceMutingLabel) ShowWindow(hDistanceMutingLabel, SW_HIDE);
+        if (hChannelSwitchingLabel) ShowWindow(hChannelSwitchingLabel, SW_HIDE);
+        if (hVoiceToggleLabel) ShowWindow(hVoiceToggleLabel, SW_HIDE);
+
+        // Hide advanced options | Masquer options avancées
         if (hPluginLabel) ShowWindow(hPluginLabel, SW_HIDE);
         if (hKeyLabel) ShowWindow(hKeyLabel, SW_HIDE);
         if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_HIDE);
@@ -3312,101 +3793,62 @@ static void ShowCategoryControls(int category) {
         if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_HIDE);
         if (hToggleLabel) ShowWindow(hToggleLabel, SW_HIDE);
 
-        // CORRECTION: Masquer ET effacer les messages dans Patch Configuration
+        // Hide messages | Masquer messages
         if (hDistanceWhisperMessage) {
             SetWindowTextW(hDistanceWhisperMessage, L"");
-            InvalidateRect(hDistanceWhisperMessage, NULL, TRUE);
-            UpdateWindow(hDistanceWhisperMessage);
             ShowWindow(hDistanceWhisperMessage, SW_HIDE);
         }
         if (hDistanceNormalMessage) {
             SetWindowTextW(hDistanceNormalMessage, L"");
-            InvalidateRect(hDistanceNormalMessage, NULL, TRUE);
-            UpdateWindow(hDistanceNormalMessage);
             ShowWindow(hDistanceNormalMessage, SW_HIDE);
         }
         if (hDistanceShoutMessage) {
             SetWindowTextW(hDistanceShoutMessage, L"");
-            InvalidateRect(hDistanceShoutMessage, NULL, TRUE);
-            UpdateWindow(hDistanceShoutMessage);
             ShowWindow(hDistanceShoutMessage, SW_HIDE);
         }
         if (hDistanceMutingMessage) {
             SetWindowTextW(hDistanceMutingMessage, L"");
-            InvalidateRect(hDistanceMutingMessage, NULL, TRUE);
-            UpdateWindow(hDistanceMutingMessage);
             ShowWindow(hDistanceMutingMessage, SW_HIDE);
         }
         if (hChannelSwitchingMessage) {
             SetWindowTextW(hChannelSwitchingMessage, L"");
-            InvalidateRect(hChannelSwitchingMessage, NULL, TRUE);
-            UpdateWindow(hChannelSwitchingMessage);
             ShowWindow(hChannelSwitchingMessage, SW_HIDE);
         }
         if (hPositionalAudioMessage) {
             SetWindowTextW(hPositionalAudioMessage, L"");
-            InvalidateRect(hPositionalAudioMessage, NULL, TRUE);
-            UpdateWindow(hPositionalAudioMessage);
             ShowWindow(hPositionalAudioMessage, SW_HIDE);
         }
 
-    }
-    else if (category == 2) { // Advanced Options
-        if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
-        if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
-        if (hExplanation3) ShowWindow(hExplanation3, SW_HIDE);
-        if (hPathLabel) ShowWindow(hPathLabel, SW_HIDE);
-        if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_HIDE);
-        if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_HIDE);
-        if (hPluginLabel) ShowWindow(hPluginLabel, SW_SHOW);
-        if (hKeyLabel) ShowWindow(hKeyLabel, SW_SHOW);
-        if (hWhisperLabel) ShowWindow(hWhisperLabel, SW_SHOW);
-        if (hNormalLabel) ShowWindow(hNormalLabel, SW_SHOW);
-        if (hShoutLabel) ShowWindow(hShoutLabel, SW_SHOW);
-        if (hConfigLabel) ShowWindow(hConfigLabel, SW_SHOW);
-        if (hConfigExplain) ShowWindow(hConfigExplain, SW_SHOW);
-        if (hDistanceLabel) ShowWindow(hDistanceLabel, SW_SHOW);
-        if (hDistanceWhisperLabel) ShowWindow(hDistanceWhisperLabel, SW_SHOW);
-        if (hDistanceNormalLabel) ShowWindow(hDistanceNormalLabel, SW_SHOW);
-        if (hDistanceShoutLabel) ShowWindow(hDistanceShoutLabel, SW_SHOW);
-        if (hWhisperKeyEdit) ShowWindow(hWhisperKeyEdit, SW_SHOW);
-        if (hWhisperButton) ShowWindow(hWhisperButton, SW_SHOW);
-        if (hNormalKeyEdit) ShowWindow(hNormalKeyEdit, SW_SHOW);
-        if (hNormalButton) ShowWindow(hNormalButton, SW_SHOW);
-        if (hShoutKeyEdit) ShowWindow(hShoutKeyEdit, SW_SHOW);
-        if (hShoutButton) ShowWindow(hShoutButton, SW_SHOW);
-        if (hConfigKeyEdit) ShowWindow(hConfigKeyEdit, SW_SHOW);
-        if (hConfigButton) ShowWindow(hConfigButton, SW_SHOW);
-        if (hEnableDistanceMutingCheck) ShowWindow(hEnableDistanceMutingCheck, SW_SHOW);
-        if (hEnableAutomaticChannelChangeCheck) ShowWindow(hEnableAutomaticChannelChangeCheck, SW_SHOW);
-        if (hDistanceWhisperEdit) ShowWindow(hDistanceWhisperEdit, SW_SHOW);
-        if (hDistanceNormalEdit) ShowWindow(hDistanceNormalEdit, SW_SHOW);
-        if (hDistanceShoutEdit) ShowWindow(hDistanceShoutEdit, SW_SHOW);
-        if (hEnableVoiceToggleCheck) ShowWindow(hEnableVoiceToggleCheck, SW_SHOW);
-        if (hVoiceToggleKeyEdit) ShowWindow(hVoiceToggleKeyEdit, SW_SHOW);
-        if (hVoiceToggleButton) ShowWindow(hVoiceToggleButton, SW_SHOW);
-        if (hToggleLabel) ShowWindow(hToggleLabel, SW_SHOW);
+        // Show preset controls | Afficher contrôles presets
+        if (hPresetTitle) ShowWindow(hPresetTitle, SW_SHOW);
+        if (hPresetInstructions) ShowWindow(hPresetInstructions, SW_SHOW);
+        for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+            if (hPresetLabels[i]) ShowWindow(hPresetLabels[i], SW_SHOW);
+            if (hPresetLoadButtons[i]) ShowWindow(hPresetLoadButtons[i], SW_SHOW);
+            if (hPresetRenameButtons[i]) ShowWindow(hPresetRenameButtons[i], SW_SHOW);
+        }
 
-        // CORRECTION: Afficher les messages seulement dans Advanced Options
-        if (hDistanceWhisperMessage) ShowWindow(hDistanceWhisperMessage, SW_SHOW);
-        if (hDistanceNormalMessage) ShowWindow(hDistanceNormalMessage, SW_SHOW);
-        if (hDistanceShoutMessage) ShowWindow(hDistanceShoutMessage, SW_SHOW);
-        if (hDistanceMutingMessage) ShowWindow(hDistanceMutingMessage, SW_SHOW);
-        if (hChannelSwitchingMessage) ShowWindow(hChannelSwitchingMessage, SW_SHOW);
-        if (hPositionalAudioMessage) ShowWindow(hPositionalAudioMessage, SW_SHOW);
+        // ✅ BOUTONS POUR CATÉGORIE 3 : TOUT MASQUÉ (pas de boutons en bas)
+        if (hSaveConfigButton) ShowWindow(hSaveConfigButton, SW_HIDE);
+        if (hSaveVoiceRangeButton) ShowWindow(hSaveVoiceRangeButton, SW_HIDE);
+        if (hCancelButton) ShowWindow(hCancelButton, SW_HIDE);
 
-        // CORRECTION: Mettre à jour les messages après les avoir affichés
-        updateDynamicInterface();
-
-        // CORRECTION: Forcer un redessin immédiat
-        Sleep(50);
-        InvalidateRect(hConfigDialog, NULL, TRUE);
-        UpdateWindow(hConfigDialog);
+        updatePresetLabels();
     }
 
-    if (hCategoryPatch && hCategoryAdvanced) {
+    SendMessage(hConfigDialog, WM_SETREDRAW, TRUE, 0);
+
+    // Remplacer InvalidateRect + UpdateWindow par un RedrawWindow complet
+    // RDW_ERASE forcera l'appel de WM_ERASEBKGND (qui dessine l'image seulement si currentCategory==1)
+    // RDW_ALLCHILDREN assure que les enfants sont rafraîchis proprement — évite les "carrés blancs" résiduels.
+    RedrawWindow(hConfigDialog, NULL, NULL,
+        RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+
+    // Mettre à jour l'état des boutons de catégorie
+    if (hCategoryPatch && hCategoryAdvanced && hCategoryPresets) {
         SendMessage(hCategoryPatch, BM_SETSTATE, (category == 1) ? TRUE : FALSE, 0);
         SendMessage(hCategoryAdvanced, BM_SETSTATE, (category == 2) ? TRUE : FALSE, 0);
+        SendMessage(hCategoryPresets, BM_SETSTATE, (category == 3) ? TRUE : FALSE, 0);
     }
 }
 
@@ -3419,47 +3861,67 @@ static void ApplyFontToControl(HWND control, HFONT font) {
 
 // Modern folder browser | Fonction pour parcourir les dossiers (moderne)
 static void browseSavedPath(HWND hwnd) {
+    // ✅ 1. Initialiser COM
     HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr)) {
         MessageBoxW(hwnd, L"Failed to initialize COM", L"Error", MB_OK | MB_ICONERROR);
         return;
     }
 
+    // ✅ 2. Créer le dialogue de sélection de fichier
     IFileOpenDialog* pFileOpen = NULL;
     hr = CoCreateInstance(&CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
         &IID_IFileOpenDialog, (void**)&pFileOpen);
 
     if (SUCCEEDED(hr)) {
+        // ✅ 3. Configurer pour sélectionner des DOSSIERS (pas des fichiers)
         DWORD dwOptions;
         hr = pFileOpen->lpVtbl->GetOptions(pFileOpen, &dwOptions);
         if (SUCCEEDED(hr)) {
             hr = pFileOpen->lpVtbl->SetOptions(pFileOpen, dwOptions | FOS_PICKFOLDERS);
         }
 
+        // ✅ 4. Définir le titre du dialogue
         if (SUCCEEDED(hr)) {
             hr = pFileOpen->lpVtbl->SetTitle(pFileOpen, L"Select your Conan Exiles game folder");
         }
 
+        // ✅ 5. Afficher le dialogue
         if (SUCCEEDED(hr)) {
             hr = pFileOpen->lpVtbl->Show(pFileOpen, hwnd);
 
+            // ✅ 6. Récupérer le chemin sélectionné SI l'utilisateur a cliqué OK
             if (SUCCEEDED(hr)) {
                 IShellItem* pItem = NULL;
                 hr = pFileOpen->lpVtbl->GetResult(pFileOpen, &pItem);
+
                 if (SUCCEEDED(hr)) {
                     PWSTR pszFilePath = NULL;
                     hr = pItem->lpVtbl->GetDisplayName(pItem, SIGDN_FILESYSPATH, &pszFilePath);
 
-                    if (SUCCEEDED(hr)) {
-                        SetWindowTextW(hSavedPathEdit, pszFilePath);
+                    // ✅ 7. Mettre à jour le contrôle ET forcer le redessin
+                    if (SUCCEEDED(hr) && pszFilePath) {
+                        // ✅ Mettre à jour la VARIABLE GLOBALE (pas un contrôle EDIT)
+                        wcscpy_s(displayedPathText, MAX_PATH, pszFilePath);
+
+                        // ✅ Forcer le redessin de l'image pour afficher le nouveau texte
+                        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+                            InvalidateRect(hSavedPathBg, NULL, TRUE);
+                            UpdateWindow(hSavedPathBg);
+                        }
+
                         CoTaskMemFree(pszFilePath);
                     }
+
                     pItem->lpVtbl->Release(pItem);
                 }
             }
         }
+
         pFileOpen->lpVtbl->Release(pFileOpen);
     }
+
+    // ✅ 8. Libérer COM
     CoUninitialize();
 }
 
@@ -3487,6 +3949,781 @@ static void browseFolderModern(HWND hwnd) {
             }
         }
         pfd->lpVtbl->Release(pfd);
+    }
+}
+
+// Preset rename dialog procedure | Procédure de dialogue de renommage de preset
+static LRESULT CALLBACK PresetRenameDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        hPresetRenameDialog = hwnd;
+
+        // Load rename dialog background from resources | Charger le fond du dialogue de renommage depuis les ressources
+        HMODULE hModuleRename = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)PresetRenameDialogProc, &hModuleRename);
+
+        hBackgroundRenamePresetBitmap = (HBITMAP)LoadImageW(
+            hModuleRename,
+            MAKEINTRESOURCEW(IDB_Background_Rename_Preset),
+            IMAGE_BITMAP,
+            0, 0,
+            LR_CREATEDIBSECTION);
+
+        if (!hBackgroundRenamePresetBitmap && enableLogGeneral) {
+            mumbleAPI.log(ownID, "WARNING: Rename dialog background (IDB_Background_Rename_Preset) not loaded");
+        }
+
+        // Current name label | Label du nom actuel
+        wchar_t currentText[128];
+        swprintf(currentText, 128, L"%S", voicePresets[renamePresetIndex].name);
+        HWND hCurrentLabel = CreateWindowW(L"STATIC", currentText,
+            WS_VISIBLE | WS_CHILD | SS_LEFT | SS_OWNERDRAW,
+            92, 37, 260, 25, hwnd, (HMENU)1500, NULL, NULL);
+        ApplyFontToControl(hCurrentLabel, hFont);
+
+        // Get dialog client area for centering | Obtenir la zone cliente du dialogue pour centrage
+        RECT dlgRect;
+        GetClientRect(hwnd, &dlgRect);
+        int dlgWidth = dlgRect.right - dlgRect.left;
+        int dlgHeight = dlgRect.bottom - dlgRect.top;
+
+        // Input edit control dimensions | Dimensions du contrôle d'édition
+        int inputWidth = 260;
+        int inputHeight = 30;
+        int inputX = (dlgWidth - inputWidth) / 2;
+        int inputY = 90;
+
+        HWND hInputEdit = CreateWindowW(L"EDIT", L"",
+            WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+            inputX, inputY, inputWidth, inputHeight, hwnd, (HMENU)1001, NULL, NULL);
+
+        // ✅ LIMITER À 10 CARACTÈRES MAXIMUM
+        SendMessage(hInputEdit, EM_LIMITTEXT, 15, 0);
+
+        SetWindowTextA(hInputEdit, voicePresets[renamePresetIndex].name);
+        SetFocus(hInputEdit);
+        SendMessage(hInputEdit, EM_SETSEL, 0, -1);
+
+        // OK and Cancel buttons dimensions | Dimensions des boutons OK et Annuler
+        int btnWidth = 80;
+        int btnHeight = 35;
+        int btnGap = 10;
+        int totalBtnWidth = (btnWidth * 2) + btnGap;
+        int btnStartX = (dlgWidth - totalBtnWidth) / 2;
+        int btnY = inputY + inputHeight + 30;
+
+        // Get real dimensions of IDB_OK_Box_01 | Récupérer les dimensions réelles de IDB_OK_Box_01
+        HMODULE hModuleOkBtn = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)PresetRenameDialogProc, &hModuleOkBtn);
+
+        if (!hModuleOkBtn) {
+            // Fallback: Get module handle from DLL | Repli: Obtenir le handle du module depuis la DLL
+            hModuleOkBtn = GetModuleHandleW(NULL);
+        }
+
+        HBITMAP hOkBoxTemp = (HBITMAP)LoadImageW(hModuleOkBtn, MAKEINTRESOURCEW(IDB_OK_Box_01),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        if (!hOkBoxTemp && enableLogGeneral) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "ERROR: Failed to load IDB_OK_Box_01 - HMODULE=0x%p", hModuleOkBtn);
+            mumbleAPI.log(ownID, logMsg);
+        }
+
+        int okBoxWidth = 80;   // Valeur par défaut
+        int okBoxHeight = 35;  // Valeur par défaut
+
+        if (hOkBoxTemp) {
+            BITMAP bmOk;
+            GetObject(hOkBoxTemp, sizeof(BITMAP), &bmOk);
+            okBoxWidth = bmOk.bmWidth;
+            okBoxHeight = bmOk.bmHeight;
+            DeleteObject(hOkBoxTemp);
+
+            if (enableLogGeneral) {
+                char logMsg[128];
+                snprintf(logMsg, sizeof(logMsg),
+                    "IDB_OK_Box_01 size: %dx%d pixels", okBoxWidth, okBoxHeight);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        // Recalculate button positions with real image dimensions | Recalculer les positions avec les vraies dimensions
+        int okBtnGap = 10;
+        int totalOkBtnWidth = (okBoxWidth * 2) + okBtnGap;
+        int okBtnStartX = (dlgWidth - totalOkBtnWidth) / 2;
+        int okBtnY = inputY + inputHeight + 30;
+
+        // OK button with real image size | Bouton OK à taille réelle
+        HWND hOkButton = CreateWindowW(L"BUTTON", L"OK",
+            WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON | BS_OWNERDRAW,
+            okBtnStartX, okBtnY, okBoxWidth, okBoxHeight, hwnd, (HMENU)1002, NULL, NULL);
+        ApplyFontToControl(hOkButton, hFont);
+
+        // Cancel button with real image size | Bouton Cancel à taille réelle
+        HWND hCancelButton = CreateWindowW(L"BUTTON", L"Cancel",
+            WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+            okBtnStartX + okBoxWidth + okBtnGap, okBtnY, okBoxWidth, okBoxHeight, hwnd, (HMENU)1003, NULL, NULL);
+        ApplyFontToControl(hCancelButton, hFont);
+
+        return 0;
+    }
+
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wParam;
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+
+        // Draw dialog background bitmap if available | Dessiner le bitmap de fond si disponible
+        if (hBackgroundRenamePresetBitmap) {
+            HDC hdcMem = CreateCompatibleDC(hdc);
+            HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBackgroundRenamePresetBitmap);
+
+            BITMAP bm;
+            GetObject(hBackgroundRenamePresetBitmap, sizeof(BITMAP), &bm);
+
+            SetStretchBltMode(hdc, HALFTONE);
+            StretchBlt(hdc,
+                0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                hdcMem,
+                0, 0, bm.bmWidth, bm.bmHeight,
+                SRCCOPY);
+
+            SelectObject(hdcMem, hOld);
+            DeleteDC(hdcMem);
+        }
+        else {
+            // Fallback: solid background | Repli : fond uni
+            HBRUSH hBrush = CreateSolidBrush(RGB(248, 249, 250));
+            FillRect(hdc, &rect, hBrush);
+            DeleteObject(hBrush);
+        }
+
+        return 1;
+    }
+
+    case WM_DRAWITEM: {
+        LPDRAWITEMSTRUCT lpDIS = (LPDRAWITEMSTRUCT)lParam;
+
+        // Draw OK and Cancel buttons with bitmap | Dessiner les boutons OK et Cancel avec bitmap
+        if (lpDIS->CtlID == 1002 || lpDIS->CtlID == 1003) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            // Load bitmap resource | Charger la ressource bitmap
+            HMODULE hModule = NULL;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCWSTR)PresetRenameDialogProc, &hModule);
+
+            if (!hModule) hModule = GetModuleHandleW(NULL);
+
+            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_OK_Box_01),
+                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+            if (hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+                BITMAP bm;
+                GetObject(hBitmap, sizeof(BITMAP), &bm);
+
+                // Draw bitmap at real size (no stretch) | Dessiner le bitmap à taille réelle (pas de stretch)
+                BitBlt(hdc,
+                    rect.left,
+                    rect.top,
+                    bm.bmWidth,
+                    bm.bmHeight,
+                    hdcMem,
+                    0, 0,
+                    SRCCOPY);
+
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
+                DeleteObject(hBitmap);
+
+                // Draw text centered on image | Dessiner le texte centré sur l'image
+                wchar_t text[32] = L"";
+                GetWindowTextW(lpDIS->hwndItem, text, 32);
+
+                HFONT hTextFont = hFont ? hFont : CreateFontW(
+                    16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                HFONT hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+
+                RECT textRect;
+                textRect.left = rect.left;
+                textRect.top = rect.top;
+                textRect.right = rect.left + bm.bmWidth;
+                textRect.bottom = rect.top + bm.bmHeight;
+
+                SetBkMode(hdc, TRANSPARENT);
+
+                // Shadow text | Texte ombre
+                SetTextColor(hdc, RGB(0, 0, 0));
+                RECT shadowRect = textRect;
+                OffsetRect(&shadowRect, 1, 1);
+                DrawTextW(hdc, text, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                // Main text in white | Texte principal en blanc
+                SetTextColor(hdc, RGB(255, 255, 255));
+                DrawTextW(hdc, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                SelectObject(hdc, hOldFont);
+                if (!hFont) DeleteObject(hTextFont);
+            }
+
+            return TRUE;
+        }
+
+        // Draw current label with white text and shadow | Dessiner le label actuel avec texte blanc et ombre
+        if (lpDIS->CtlID == 1500) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            SetBkMode(hdc, TRANSPARENT);
+
+            wchar_t text[128] = L"";
+            GetWindowTextW(lpDIS->hwndItem, text, 128);
+
+            HFONT hTextFont = hFont ? hFont : CreateFontW(
+                16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            HFONT hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+
+            // Shadow text | Texte ombre
+            SetTextColor(hdc, RGB(0, 0, 0));
+            RECT shadowRect = rect;
+            OffsetRect(&shadowRect, 1, 1);
+            DrawTextW(hdc, text, -1, &shadowRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            // Main text in white | Texte principal en blanc
+            SetTextColor(hdc, RGB(255, 255, 255));
+            DrawTextW(hdc, text, -1, &rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            SelectObject(hdc, hOldFont);
+            if (!hFont) DeleteObject(hTextFont);
+
+            return TRUE;
+        }
+
+        // Draw button bitmaps | Dessiner les bitmaps des boutons
+        if (lpDIS->CtlType == ODT_BUTTON) {
+            DrawButtonWithBitmap(lpDIS);
+            return TRUE;
+        }
+        break;
+    }
+
+    case WM_COMMAND: {
+        switch (LOWORD(wParam)) {
+        case 1002: { // OK
+            HWND hEdit = GetDlgItem(hwnd, 1001);
+            char newName[PRESET_NAME_MAX_LENGTH];
+            GetWindowTextA(hEdit, newName, PRESET_NAME_MAX_LENGTH);
+
+            if (strlen(newName) > 0) {
+                renameVoicePreset(renamePresetIndex, newName);
+            }
+
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        case 1003: // Cancel
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdcStatic = (HDC)wParam;
+        SetBkMode(hdcStatic, TRANSPARENT);
+        SetTextColor(hdcStatic, RGB(33, 37, 41));
+        return (LRESULT)GetStockObject(NULL_BRUSH);
+    }
+
+
+
+    case WM_CTLCOLOREDIT: {
+        HDC hdcEdit = (HDC)wParam;
+        SetBkMode(hdcEdit, TRANSPARENT);
+        SetTextColor(hdcEdit, RGB(33, 37, 41));
+        return (LRESULT)GetStockObject(WHITE_BRUSH);
+    }
+
+    case WM_DESTROY:
+        hPresetRenameDialog = NULL;
+        // Free background bitmap for rename dialog | Libérer le bitmap de fond du dialogue de renommage
+        if (hBackgroundRenamePresetBitmap) {
+            DeleteObject(hBackgroundRenamePresetBitmap);
+            hBackgroundRenamePresetBitmap = NULL;
+        }
+        // Réinitialiser le flag pour permettre le redessin à la prochaine ouverture
+        backgroundDrawn = FALSE;
+        return 0;
+
+
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+// Preset save dialog procedure | Procédure de dialogue de sauvegarde de preset
+static LRESULT CALLBACK PresetSaveDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        hPresetSaveDialog = hwnd;
+
+        // Load save-presets dialog background from resources | Charger le fond du dialogue de sauvegarde depuis les ressources
+        HMODULE hModule = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)PresetSaveDialogProc, &hModule);
+
+        hBackgroundSavePresetBitmap = (HBITMAP)LoadImageW(
+            hModule,
+            MAKEINTRESOURCEW(IDB_Background_Save_Voice_Range_Presets),
+            IMAGE_BITMAP,
+            0, 0,
+            LR_CREATEDIBSECTION);
+
+        if (!hBackgroundSavePresetBitmap && enableLogGeneral) {
+            mumbleAPI.log(ownID, "WARNING: Save presets dialog background (IDB_Background_Save_Voice_Range_Presets) not loaded");
+        }
+
+        // Create 10 preset buttons using preset box image size | Créer 10 boutons de preset en utilisant la taille de l'image de preset
+        int yPos = 90;
+
+        // Get HMODULE and real dimensions of IDB_Preset_Box_01 | Obtenir HMODULE et dimensions réelles de IDB_Preset_Box_01
+        HMODULE hPresetModule = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)PresetSaveDialogProc, &hPresetModule);
+
+        HBITMAP hPresetBoxTemp = (HBITMAP)LoadImageW(hPresetModule, MAKEINTRESOURCEW(IDB_Preset_Box_01),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        int presetBoxWidth = 400;  // fallback width | largeur de repli
+        int presetBoxHeight = 35;  // fallback height | hauteur de repli
+
+        if (hPresetBoxTemp) {
+            BITMAP bmPreset;
+            GetObject(hPresetBoxTemp, sizeof(BITMAP), &bmPreset);
+            presetBoxWidth = bmPreset.bmWidth;
+            presetBoxHeight = bmPreset.bmHeight;
+            DeleteObject(hPresetBoxTemp);
+
+            if (enableLogGeneral) {
+                char logMsg[128];
+                snprintf(logMsg, sizeof(logMsg),
+                    "IDB_Preset_Box_01 size: %dx%d pixels", presetBoxWidth, presetBoxHeight);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+            wchar_t buttonText[128];
+            if (voicePresets[i].isUsed) {
+                wchar_t wName[PRESET_NAME_MAX_LENGTH];
+                size_t converted = 0;
+                mbstowcs_s(&converted, wName, PRESET_NAME_MAX_LENGTH, voicePresets[i].name, _TRUNCATE);
+                swprintf(buttonText, 128, L"[%d] %s (%.1f / %.1f / %.1f)",
+                    i + 1, wName,
+                    voicePresets[i].whisperDistance,
+                    voicePresets[i].normalDistance,
+                    voicePresets[i].shoutDistance);
+            }
+            else {
+                swprintf(buttonText, 128, L"[%d] Empty Slot", i + 1);
+            }
+
+            // Calculate centered X for preset button | Calculer la position X centrée pour le bouton preset
+            RECT dlgRect;
+            GetClientRect(hwnd, &dlgRect);
+            int clientWidth = dlgRect.right - dlgRect.left;
+            int presetX = (clientWidth - presetBoxWidth) / 2;
+            if (presetX < 10) presetX = 10; // keep small left margin if image wider than dialog | garder une petite marge si l'image est plus large que la fenêtre
+
+            HWND hPresetButton = CreateWindowW(L"BUTTON", buttonText,
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+                presetX, yPos, presetBoxWidth, presetBoxHeight, hwnd, (HMENU)(700 + i), NULL, NULL);
+            ApplyFontToControl(hPresetButton, hFont);
+
+            // vertical spacing = image height + 5px gap | espacement vertical = hauteur image + 5px
+            yPos += presetBoxHeight + 5;
+        }
+
+        return 0;
+    }
+
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wParam;
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+
+        // Draw dialog background bitmap if available | Dessiner le bitmap de fond du dialogue si disponible
+        if (hBackgroundSavePresetBitmap) {
+            HDC hdcMem = CreateCompatibleDC(hdc);
+            HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBackgroundSavePresetBitmap);
+
+            BITMAP bm;
+            GetObject(hBackgroundSavePresetBitmap, sizeof(BITMAP), &bm);
+
+            SetStretchBltMode(hdc, HALFTONE);
+            StretchBlt(hdc,
+                0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                hdcMem,
+                0, 0, bm.bmWidth, bm.bmHeight,
+                SRCCOPY);
+
+            SelectObject(hdcMem, hOld);
+            DeleteDC(hdcMem);
+        }
+        else {
+            // Fallback: solid background | Repli : fond uni
+            HBRUSH hBrush = CreateSolidBrush(RGB(248, 249, 250));
+            FillRect(hdc, &rect, hBrush);
+            DeleteObject(hBrush);
+        }
+
+        return 1;
+    }
+
+    case WM_DRAWITEM: {
+        LPDRAWITEMSTRUCT lpDIS = (LPDRAWITEMSTRUCT)lParam;
+
+        // Dessiner le bitmap pour TOUS les boutons
+        if (lpDIS->CtlType == ODT_BUTTON) {
+            DrawButtonWithBitmap(lpDIS);
+            return TRUE;
+        }
+        break;
+    }
+
+    case WM_COMMAND: {
+        int buttonId = LOWORD(wParam);
+
+        // Handle preset selection | Gérer la sélection de preset
+        if (buttonId >= 700 && buttonId < 700 + MAX_VOICE_PRESETS) {
+            int presetIndex = buttonId - 700;
+            saveVoicePreset(presetIndex, NULL);
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        // Handle cancel | Gérer l'annulation
+        else if (buttonId == 999) {
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdcStatic = (HDC)wParam;
+        SetBkMode(hdcStatic, TRANSPARENT);
+        SetTextColor(hdcStatic, RGB(33, 37, 41));
+        return (LRESULT)GetStockObject(NULL_BRUSH);
+    }
+
+    case WM_DESTROY:
+        hPresetSaveDialog = NULL;
+
+        // Free background bitmap for save dialog | Libérer le bitmap de fond du dialogue de sauvegarde
+        if (hBackgroundSavePresetBitmap) {
+            DeleteObject(hBackgroundSavePresetBitmap);
+            hBackgroundSavePresetBitmap = NULL;
+        }
+
+        return 0;
+
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+// Show preset save dialog | Afficher le dialogue de sauvegarde de preset
+static void showPresetSaveDialog(void) {
+    if (hPresetSaveDialog && IsWindow(hPresetSaveDialog)) {
+        SetForegroundWindow(hPresetSaveDialog);
+        return;
+    }
+
+    const wchar_t PRESET_DIALOG_CLASS[] = L"PresetSaveDialogClass";
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = PresetSaveDialogProc;
+    wc.hInstance = GetModuleHandleW(NULL);
+    wc.lpszClassName = PRESET_DIALOG_CLASS;
+    wc.hbrBackground = CreateSolidBrush(RGB(248, 249, 250));
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+    UnregisterClassW(PRESET_DIALOG_CLASS, wc.hInstance);
+    RegisterClassW(&wc);
+
+    // ✅ CORRECTION : Centrer au-dessus de l'interface principale
+    int dialogWidth = 440;
+    int dialogHeight = 580;
+    int dialogX, dialogY;
+
+    if (hConfigDialog && IsWindow(hConfigDialog)) {
+        // Get parent window position and size | Obtenir position et taille de la fenêtre parente
+        RECT parentRect;
+        GetWindowRect(hConfigDialog, &parentRect);
+
+        int parentWidth = parentRect.right - parentRect.left;
+        int parentHeight = parentRect.bottom - parentRect.top;
+        int parentX = parentRect.left;
+        int parentY = parentRect.top;
+
+        dialogX = parentX + (parentWidth - dialogWidth) / 2;
+        dialogY = parentY + (parentHeight - dialogHeight) / 2;
+
+        if (enableLogGeneral) {
+            char logMsg[256];
+            snprintf(logMsg, sizeof(logMsg),
+                "Save dialog: Parent at (%d,%d), Dialog at (%d,%d)",
+                parentX, parentY, dialogX, dialogY);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+    else {
+        // Fallback to screen center if parent not available | Centrer sur l'écran si parent indisponible
+        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+        dialogX = (screenWidth - dialogWidth) / 2;
+        dialogY = (screenHeight - dialogHeight) / 2;
+    }
+
+    hPresetSaveDialog = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        PRESET_DIALOG_CLASS,
+        L"Save Voice Range Preset",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        dialogX, dialogY, dialogWidth, dialogHeight,
+        hConfigDialog, NULL, wc.hInstance, NULL);
+
+    if (hPresetSaveDialog) {
+        SetLayeredWindowAttributes(hPresetSaveDialog, 0, 250, LWA_ALPHA);
+        ShowWindow(hPresetSaveDialog, SW_SHOW);
+        UpdateWindow(hPresetSaveDialog);
+    }
+}
+
+// Update preset labels in category 3 | Mettre à jour les labels de preset dans la catégorie 3
+static void updatePresetLabels(void) {
+    if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
+    if (currentCategory != 3) return;
+
+    for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+        if (hPresetLabels[i] && IsWindow(hPresetLabels[i])) {
+            wchar_t labelText[256];
+            wchar_t wName[PRESET_NAME_MAX_LENGTH];
+            size_t converted = 0;
+            mbstowcs_s(&converted, wName, PRESET_NAME_MAX_LENGTH, voicePresets[i].name, _TRUNCATE);
+
+            if (voicePresets[i].isUsed) {
+                // ✅ FORMAT SANS CROCHETS
+                swprintf(labelText, 256, L"%d %s - W:%.1f N:%.1f S:%.1f m",
+                    i + 1, wName,
+                    voicePresets[i].whisperDistance,
+                    voicePresets[i].normalDistance,
+                    voicePresets[i].shoutDistance);
+            }
+            else {
+                swprintf(labelText, 256, L"%d %s (Empty)", i + 1, wName);
+            }
+
+            SetWindowTextW(hPresetLabels[i], labelText);
+        }
+
+        if (hPresetLoadButtons[i] && IsWindow(hPresetLoadButtons[i])) {
+            EnableWindow(hPresetLoadButtons[i], voicePresets[i].isUsed);
+        }
+    }
+}
+
+static LRESULT CALLBACK PresetLabelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+
+        // Fond transparent
+        SetBkMode(hdc, TRANSPARENT);
+
+        // Récupérer le texte du label
+        wchar_t text[256];
+        GetWindowTextW(hwnd, text, 256);
+
+        // Charger l'icône checkmark
+        HMODULE hModule = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)PresetLabelProc, &hModule);
+
+        HICON hCheckIcon = (HICON)LoadImageW(hModule, MAKEINTRESOURCEW(IDI_CHECKMARK),
+            IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+
+        if (hCheckIcon) {
+            // Dessiner l'icône à gauche
+            int iconX = 2;
+            int iconY = (rect.bottom - 16) / 2;
+            DrawIconEx(hdc, iconX, iconY, hCheckIcon, 16, 16, 0, NULL, DI_NORMAL);
+            DestroyIcon(hCheckIcon);
+        }
+
+        // Dessiner le texte décalé de 20px à droite
+        RECT textRect = rect;
+        textRect.left += 20;
+
+        // Ombre noire | Black shadow
+        SetTextColor(hdc, RGB(0, 0, 0));
+        RECT shadowRect = textRect;
+        OffsetRect(&shadowRect, 1, 1);
+        DrawTextW(hdc, text, -1, &shadowRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        // Texte principal en blanc | Main text in white
+        SetTextColor(hdc, RGB(255, 255, 255));
+        DrawTextW(hdc, text, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, PresetLabelProc, uIdSubclass);
+        break;
+    }
+
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+// Create presets category controls | Créer les contrôles de la catégorie presets
+static void createPresetsCategory(void) {
+    // Create preset rows | Créer les lignes de preset
+        // Get module handle for loading resources | Obtenir le handle du module pour charger les ressources
+    HMODULE hModule = NULL;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)createPresetsCategory, &hModule);
+
+    int presetYPositions[MAX_VOICE_PRESETS] = {
+            215,    // Preset 1
+            257,    // Preset 2
+            298,    // Preset 3
+            340,    // Preset 4
+            380,    // Preset 5
+            423,    // Preset 6
+            465,    // Preset 7
+            505,    // Preset 8
+            547,    // Preset 9
+            587     // Preset 10
+    };
+
+    // Manual Y positions for Load and Rename buttons | Positions Y manuelles pour les boutons Load et Rename
+    int buttonYPositions[MAX_VOICE_PRESETS] = {
+            217,    // Preset 1
+            259,    // Preset 2
+            300,    // Preset 3
+            342,    // Preset 4
+            382,    // Preset 5
+            426,    // Preset 6
+            467,    // Preset 7
+            507,    // Preset 8
+            549,    // Preset 9
+            589     // Preset 10
+    };
+
+    for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
+        int yPos = presetYPositions[i];
+        int buttonY = buttonYPositions[i];
+
+        // Preset name label | Label du nom du preset - SANS EMOJI
+        wchar_t labelText[256];
+        wchar_t wName[PRESET_NAME_MAX_LENGTH];
+        size_t converted = 0;
+        mbstowcs_s(&converted, wName, PRESET_NAME_MAX_LENGTH, voicePresets[i].name, _TRUNCATE);
+
+        if (voicePresets[i].isUsed) {
+            // ✅ FORMAT CORRIGÉ : Pas d'emoji microphone
+            swprintf(labelText, 256, L"[%d] %s - W:%.1f N:%.1f S:%.1f m",
+                i + 1, wName,
+                voicePresets[i].whisperDistance,
+                voicePresets[i].normalDistance,
+                voicePresets[i].shoutDistance);
+        }
+        else {
+            swprintf(labelText, 256, L"[%d] %s (Empty)", i + 1, wName);
+        }
+
+        hPresetLabels[i] = CreateWindowW(L"STATIC", labelText,
+            WS_CHILD | SS_LEFT | SS_OWNERDRAW,
+            40, yPos + 5, 300, 25, hConfigDialog, (HMENU)(850 + i), NULL, NULL);
+        ApplyFontToControl(hPresetLabels[i], hFont);
+
+        // ✅ Activer le custom draw
+        SetWindowSubclass(hPresetLabels[i], PresetLabelProc, 850 + i, 0);
+
+        // Get real dimensions of IDB_Load_Box_01 | Récupérer les dimensions réelles de IDB_Load_Box_01
+        HBITMAP hLoadBoxTemp = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Load_Box_01),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        int loadBoxWidth = 80;   // Valeur par défaut
+        int loadBoxHeight = 30;  // Valeur par défaut
+
+        if (hLoadBoxTemp) {
+            BITMAP bmLoad;
+            GetObject(hLoadBoxTemp, sizeof(BITMAP), &bmLoad);
+            loadBoxWidth = bmLoad.bmWidth;
+            loadBoxHeight = bmLoad.bmHeight;
+            DeleteObject(hLoadBoxTemp);
+
+            if (enableLogGeneral) {
+                char logMsg[128];
+                snprintf(logMsg, sizeof(logMsg),
+                    "IDB_Load_Box_01 size: %dx%d pixels", loadBoxWidth, loadBoxHeight);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        // Load button with Load Box image size | Bouton charger avec la taille de l'image Load Boxf
+        hPresetLoadButtons[i] = CreateWindowW(L"BUTTON", L"Load",
+            WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+            370, buttonY, loadBoxWidth, loadBoxHeight, hConfigDialog, (HMENU)(900 + i), NULL, NULL);
+        ApplyFontToControl(hPresetLoadButtons[i], hFont);
+        EnableWindow(hPresetLoadButtons[i], voicePresets[i].isUsed);
+
+        // Get real dimensions of IDB_Rename_Box_01 | Récupérer les dimensions réelles de IDB_Rename_Box_01
+        HBITMAP hRenameBoxTemp = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Rename_Box_01),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        int renameBoxWidth = 100;  // Valeur par défaut
+        int renameBoxHeight = 30;  // Valeur par défaut
+
+        if (hRenameBoxTemp) {
+            BITMAP bmRename;
+            GetObject(hRenameBoxTemp, sizeof(BITMAP), &bmRename);
+            renameBoxWidth = bmRename.bmWidth;
+            renameBoxHeight = bmRename.bmHeight;
+            DeleteObject(hRenameBoxTemp);
+
+            if (enableLogGeneral) {
+                char logMsg[128];
+                snprintf(logMsg, sizeof(logMsg),
+                    "IDB_Rename_Box_01 size: %dx%d pixels", renameBoxWidth, renameBoxHeight);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        // Rename button with Rename Box image size | Bouton renommer avec la taille de l'image Rename Box
+        hPresetRenameButtons[i] = CreateWindowW(L"BUTTON", L"Rename",
+            WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+            465, buttonY, renameBoxWidth, renameBoxHeight, hConfigDialog, (HMENU)(950 + i), NULL, NULL);
     }
 }
 
@@ -3524,6 +4761,301 @@ static void processKeyCapture() {
     }
 }
 
+static int calculateButtonWidth(const wchar_t* text, HFONT font) {
+    HDC hdc = GetDC(NULL);
+    HFONT oldFont = (HFONT)SelectObject(hdc, font);
+
+    SIZE textSize;
+    GetTextExtentPoint32W(hdc, text, (int)wcslen(text), &textSize);
+
+    SelectObject(hdc, oldFont);
+    ReleaseDC(NULL, hdc);
+
+    // Largeur du texte + 10 pixels de marge totale (5px de chaque côté) + padding Windows
+    return textSize.cx + 10 + 20; // 20px = padding interne du bouton Windows
+}
+
+// Load background bitmap from resources | Charger l'image de fond depuis les ressources
+static HBITMAP LoadBackgroundFromResource(int resourceID) {
+    HMODULE hModule = NULL;
+    // Obtenir le HMODULE de la DLL à partir d'une adresse interne (fonction dans cette DLL)
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)LoadBackgroundFromResource, &hModule)) {
+        DWORD err = GetLastError();
+        if (enableLogGeneral) {
+            char errorMsg[128];
+            snprintf(errorMsg, sizeof(errorMsg),
+                "ERROR: GetModuleHandleExW failed (Error: %lu)", err);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+        return NULL;
+    }
+
+    // Charger le bitmap depuis les ressources de la DLL (Unicode)
+    HBITMAP hBitmap = (HBITMAP)LoadImageW(
+        hModule,
+        MAKEINTRESOURCEW(resourceID),
+        IMAGE_BITMAP,
+        0, 0,
+        LR_CREATEDIBSECTION
+    );
+
+    if (!hBitmap) {
+        DWORD error = GetLastError();
+        if (enableLogGeneral) {
+            char errorMsg[192];
+            snprintf(errorMsg, sizeof(errorMsg),
+                "ERROR: Failed to load background bitmap (ID=%d) from DLL resources (Error: %lu)",
+                resourceID, error);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+        return NULL;
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Background bitmap loaded successfully from DLL resources");
+    }
+
+    return hBitmap;
+}
+
+static void DrawButtonWithBitmap(LPDRAWITEMSTRUCT lpDIS) {
+    HDC hdc = lpDIS->hDC;
+    RECT rect = lpDIS->rcItem;
+
+    int ctrlId = lpDIS->CtlID;
+    int bitmapResource = IDB_Main_Button_01; // Initialize with default value | Initialiser avec valeur par défaut
+
+    HMODULE hModule = NULL;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)DrawButtonWithBitmap, &hModule);
+
+    // Use main image for category and bottom buttons | Utiliser l'image principale pour les boutons de catégorie et du bas
+    if (ctrlId == 301 || ctrlId == 302 || ctrlId == 303 || ctrlId == 1 || ctrlId == 11 || ctrlId == 2) {
+        bitmapResource = IDB_Main_Button_01;
+    }
+    // Use preset box image for preset save buttons (IDs 700-709) | Utiliser l'image de preset pour les boutons de sauvegarde de preset (IDs 700-709)
+    else if (ctrlId >= 700 && ctrlId < 700 + MAX_VOICE_PRESETS) {
+        bitmapResource = IDB_Preset_Box_01;
+    }
+    // Use dedicated image for Browse button | Utiliser l'image dédiée pour le bouton Browse (ID 105)
+    else if (ctrlId == 105) {
+        bitmapResource = IDB_Browse_Button;
+    }
+
+    // Charger le bitmap (chaque appel charge une instance locale afin d'éviter conflits de HBITMAP partagés)
+    HBITMAP hButtonBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(bitmapResource),
+        IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+    if (hButtonBitmap) {
+        HDC hdcMem = CreateCompatibleDC(hdc);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hButtonBitmap);
+
+        BITMAP bm;
+        GetObject(hButtonBitmap, sizeof(BITMAP), &bm);
+
+        int btnWidth = rect.right - rect.left;
+        int btnHeight = rect.bottom - rect.top;
+
+        // Draw main/button images and preset box images at real size | Dessiner les images principales et les boîtes de preset à taille réelle
+        if (ctrlId == 301 || ctrlId == 302 || ctrlId == 303 || ctrlId == 1 || ctrlId == 11 || ctrlId == 2 ||
+            (ctrlId >= 700 && ctrlId < 700 + MAX_VOICE_PRESETS)) {
+            // Draw bitmap at natural size (no stretch) | Dessiner le bitmap à taille naturelle (sans étirement)
+            BitBlt(hdc,
+                rect.left,
+                rect.top,
+                bm.bmWidth,
+                bm.bmHeight,
+                hdcMem,
+                0, 0,
+                SRCCOPY);
+
+            // Centrer le texte sur l'image (texte récupéré depuis le bouton si disponible)
+            wchar_t overlayText[128] = L"";
+            GetWindowTextW(lpDIS->hwndItem, overlayText, (int)(sizeof(overlayText) / sizeof(wchar_t)));
+            if (wcslen(overlayText) == 0) {
+                // Valeurs par défaut si aucun texte (fallback lisible)
+                if (ctrlId == 301) wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Patch Configuration");
+                else if (ctrlId == 302) wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Advanced Options");
+                else if (ctrlId == 303) wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Voice Presets");
+                else if (ctrlId == 1)   wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Save Configuration");
+                else if (ctrlId == 11)  wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Save Voice Range");
+                else if (ctrlId == 2)   wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Cancel");
+            }
+
+            HFONT hTextFont = NULL;
+            HFONT hOldFont = NULL;
+            if (hFontBold) {
+                hTextFont = hFontBold;
+                hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+            }
+            else {
+                hTextFont = CreateFontW(
+                    16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+            }
+
+            RECT textRect;
+            textRect.left = rect.left;
+            textRect.top = rect.top;
+            textRect.right = rect.left + bm.bmWidth;
+            textRect.bottom = rect.top + bm.bmHeight;
+
+            // Si le bouton réel est plus grand que le bitmap, étendre le rect de texte pour centrer proprement
+            if ((textRect.right - textRect.left) < btnWidth) textRect.right = rect.right;
+            if ((textRect.bottom - textRect.top) < btnHeight) textRect.bottom = rect.bottom;
+
+            SetBkMode(hdc, TRANSPARENT);
+            // Ombre
+            SetTextColor(hdc, RGB(0, 0, 0));
+            RECT shadowRect = textRect;
+            OffsetRect(&shadowRect, 1, 1);
+            DrawTextW(hdc, overlayText, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            // Texte principal
+            SetTextColor(hdc, RGB(240, 240, 240));
+            DrawTextW(hdc, overlayText, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            SelectObject(hdc, hOldFont);
+            if (!hFontBold && hTextFont) {
+                DeleteObject(hTextFont);
+            }
+        }
+        else if (ctrlId == 105) {
+            // Bouton Browse : dessiner le bitmap à taille réelle, sans stretch (identique logique)
+            BitBlt(hdc,
+                rect.left,
+                rect.top,
+                bm.bmWidth,
+                bm.bmHeight,
+                hdcMem,
+                0, 0,
+                SRCCOPY);
+
+            wchar_t overlayText[128] = L"";
+            GetWindowTextW(lpDIS->hwndItem, overlayText, (int)(sizeof(overlayText) / sizeof(wchar_t)));
+            if (wcslen(overlayText) == 0) wcscpy_s(overlayText, sizeof(overlayText) / sizeof(wchar_t), L"Browse");
+
+            HFONT hTextFont = NULL;
+            HFONT hOldFont = NULL;
+            if (hFontBold) {
+                hTextFont = hFontBold;
+                hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+            }
+            else if (hFont) {
+                hTextFont = hFont;
+                hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+            }
+            else {
+                hTextFont = CreateFontW(
+                    16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+            }
+
+            RECT textRect;
+            textRect.left = rect.left;
+            textRect.top = rect.top;
+            textRect.right = rect.left + bm.bmWidth;
+            textRect.bottom = rect.top + bm.bmHeight;
+
+            int btnWidthLocal = rect.right - rect.left;
+            int btnHeightLocal = rect.bottom - rect.top;
+            if ((textRect.right - textRect.left) < btnWidthLocal) textRect.right = rect.right;
+            if ((textRect.bottom - textRect.top) < btnHeightLocal) textRect.bottom = rect.bottom;
+
+            SetBkMode(hdc, TRANSPARENT);
+
+            SetBkMode(hdc, TRANSPARENT);
+            // Ombre
+            SetTextColor(hdc, RGB(0, 0, 0));
+            RECT shadowRect = textRect;
+            OffsetRect(&shadowRect, 1, 1);
+            DrawTextW(hdc, overlayText, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            // Texte principal en blanc
+            SetTextColor(hdc, RGB(255, 255, 255));
+            DrawTextW(hdc, overlayText, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            SelectObject(hdc, hOldFont);
+            if (!hFontBold && hTextFont) {
+                DeleteObject(hTextFont);
+            }
+        }
+
+        SelectObject(hdcMem, hOldBitmap);
+        DeleteDC(hdcMem);
+        DeleteObject(hButtonBitmap);
+    }
+    else {
+        // Fallback : fond gris si l'image ne charge pas
+        HBRUSH hBrush = CreateSolidBrush(RGB(220, 220, 220));
+        FillRect(hdc, &rect, hBrush);
+        DeleteObject(hBrush);
+    }
+
+    // Do not redraw default text for main, bottom and preset save buttons | Ne pas redessiner le texte par défaut pour les boutons principaux, du bas et de sauvegarde des presets
+    if (ctrlId != 301 && ctrlId != 302 && ctrlId != 303 && ctrlId != 105 && ctrlId != 1 && ctrlId != 11 && ctrlId != 2
+        && !(ctrlId >= 700 && ctrlId < 700 + MAX_VOICE_PRESETS)) {
+
+        wchar_t text[256];
+        GetWindowTextW(lpDIS->hwndItem, text, 256);
+        SetBkMode(hdc, TRANSPARENT);
+
+        if (lpDIS->itemState & ODS_SELECTED) {
+            rect.left += 2;
+            rect.top += 2;
+        }
+
+        // Shadow text | Texte ombre
+        SetTextColor(hdc, RGB(0, 0, 0));
+        RECT shadowRect = rect;
+        OffsetRect(&shadowRect, 1, 1);
+        DrawTextW(hdc, text, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        // Main text in white | Texte principal en blanc
+        SetTextColor(hdc, RGB(255, 255, 255));
+        DrawTextW(hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+}
+
+// Subclass procedure pour rendre les labels cliquables
+static LRESULT CALLBACK CheckboxLabelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    switch (msg) {
+    case WM_LBUTTONDOWN: {
+        // Cliquer sur le label = cocher/décocher la checkbox associée
+        HWND hCheckbox = (HWND)dwRefData;
+        if (hCheckbox && IsWindow(hCheckbox)) {
+            LRESULT checkState = SendMessage(hCheckbox, BM_GETCHECK, 0, 0);
+            SendMessage(hCheckbox, BM_SETCHECK, (checkState == BST_CHECKED) ? BST_UNCHECKED : BST_CHECKED, 0);
+
+            // Envoyer notification au parent (simule un clic sur la checkbox)
+            HWND hParent = GetParent(hCheckbox);
+            if (hParent) {
+                SendMessage(hParent, WM_COMMAND, MAKEWPARAM(GetDlgCtrlID(hCheckbox), BN_CLICKED), (LPARAM)hCheckbox);
+            }
+        }
+        return 0;
+    }
+
+    case WM_SETCURSOR:
+        // Afficher le curseur "main" (pointeur) au survol
+        SetCursor(LoadCursor(NULL, IDC_HAND));
+        return TRUE;
+
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, CheckboxLabelProc, uIdSubclass);
+        break;
+    }
+
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
 // Main window procedure | Procédure de la fenêtre principale
 LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     HWND control;
@@ -3531,6 +5063,8 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     switch (msg) {
     case WM_CREATE:
         hConfigDialog = hwnd;
+
+        // ✅ 1) CRÉER LES POLICES UNE SEULE FOIS
         hFont = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -3547,261 +5081,101 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Emoji");
 
-        // Main title | Titre principal
-        control = CreateWindowW(L"STATIC", L"\U0001F3AE Plugin Settings",
-            WS_VISIBLE | WS_CHILD | SS_CENTER,
-            10, 15, 580, 35, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(control, hFontLarge);
+        hBackgroundBitmap = LoadBackgroundFromResource(IDB_BACKGROUND);
 
-        // Category buttons | Boutons de catégories
-        hCategoryPatch = CreateWindowW(L"BUTTON", L"\U0001F4C1 Patch Configuration",
-            WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-            80, 65, 200, 40, hwnd, (HMENU)301, NULL, NULL);
-        ApplyFontToControl(hCategoryPatch, hFontBold);
+        hBackgroundAdvancedBitmap = LoadBackgroundFromResource(IDB_Background_Plugin_Settings);
+        if (!hBackgroundAdvancedBitmap && enableLogGeneral) {
+            mumbleAPI.log(ownID, "WARNING: Advanced background image (IDB_Background_Plugin_Settings) not loaded");
+        }
 
-        hCategoryAdvanced = CreateWindowW(L"BUTTON", L"\u2699\uFE0F Advanced Options",
-            WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-            300, 65, 200, 40, hwnd, (HMENU)302, NULL, NULL);
-        ApplyFontToControl(hCategoryAdvanced, hFontBold);
+        hBackgroundPresetsBitmap = LoadBackgroundFromResource(IDB_Background_Voice_Presets);
 
-        // Separator line | Ligne de séparation
-        control = CreateWindowW(L"STATIC", L"",
-            WS_VISIBLE | WS_CHILD | SS_ETCHEDHORZ,
-            40, 120, 520, 2, hwnd, NULL, NULL, NULL);
+        // Disable double buffering to reduce flickering | Désactiver le double buffering pour réduire les scintillements
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE,
+            GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_COMPOSITED);
 
-        // Category 1 content: Patch Configuration | Contenu catégorie 1: Configuration du patch
-        control = CreateWindowW(L"STATIC", infoText1,
-            WS_VISIBLE | WS_CHILD,
-            40, 140, 520, 25, hwnd, (HMENU)401, NULL, NULL);
-        ApplyFontToControl(control, hFont);
+        // Get real dimensions of IDB_Main_Button_01 image | Récupérer les dimensions réelles de l'image IDB_Main_Button_01
+        HMODULE hModuleBtn = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)ConfigDialogProc, &hModuleBtn);
 
-        control = CreateWindowW(L"STATIC", infoText2,
-            WS_VISIBLE | WS_CHILD,
-            40, 170, 520, 25, hwnd, (HMENU)402, NULL, NULL);
-        ApplyFontToControl(control, hFont);
+        HBITMAP hTempBitmap = (HBITMAP)LoadImageW(hModuleBtn, MAKEINTRESOURCEW(IDB_Main_Button_01),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
 
-        control = CreateWindowW(L"STATIC", infoText3,
-            WS_VISIBLE | WS_CHILD,
-            40, 200, 520, 25, hwnd, (HMENU)403, NULL, NULL);
-        ApplyFontToControl(control, hFont);
+        int imageWidth = 170;  // Valeur par défaut au cas où l'image ne charge pas
+        int imageHeight = 40;  // Valeur par défaut
 
-        control = CreateWindowW(L"STATIC", L"\U0001F4CD Game Installation Path",
-            WS_VISIBLE | WS_CHILD,
-            40, 240, 300, 25, hwnd, (HMENU)404, NULL, NULL);
-        ApplyFontToControl(control, hFontBold);
+        if (hTempBitmap) {
+            BITMAP bm;
+            GetObject(hTempBitmap, sizeof(BITMAP), &bm);
+            imageWidth = bm.bmWidth;   // ✅ Largeur RÉELLE de l'image
+            imageHeight = bm.bmHeight; // ✅ Hauteur RÉELLE de l'image
+            DeleteObject(hTempBitmap);
 
-        hSavedPathEdit = CreateWindowW(L"EDIT", L"",
-            WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
-            40, 270, 380, 35, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hSavedPathEdit, hFont);
+            if (enableLogGeneral) {
+                char logMsg[128];
+                snprintf(logMsg, sizeof(logMsg),
+                    "IDB_Main_Button_01 size: %dx%d pixels", imageWidth, imageHeight);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
 
-        hSavedPathButton = CreateWindowW(L"BUTTON", L"\U0001F50D Browse",
-            WS_VISIBLE | WS_CHILD,
-            430, 270, 100, 35, hwnd, (HMENU)105, NULL, NULL);
-        ApplyFontToControl(hSavedPathButton, hFont);
+        {
+            // Get actual window width | Récupérer la largeur réelle de la fenêtre
+            RECT clientRect;
+            GetClientRect(hwnd, &clientRect);
+            int windowWidth = clientRect.right - clientRect.left;
 
-        // Category 2 content: Advanced Options (initially hidden) | Contenu catégorie 2: Options avancées (initialement masqué)
-        control = CreateWindowW(L"STATIC", L"\U0001F527 Plugin Features",
-            WS_CHILD,
-            40, 115, 250, 25, hwnd, (HMENU)501, NULL, NULL);
-        ApplyFontToControl(control, hFontBold);
+            const int numButtons = 3;
+            const float edgeToGapRatio = 2.0f; // Ratio between edge gap and internal gap | Ratio entre l'écart des bords et l'écart interne
 
-        hEnableDistanceMutingCheck = CreateWindowW(L"BUTTON", L"\U0001F4CF Enable distance-based muting",
-            WS_CHILD | BS_AUTOCHECKBOX,
-            60, 145, 320, 25, hwnd, (HMENU)201, NULL, NULL);
-        ApplyFontToControl(hEnableDistanceMutingCheck, hFont);
+            int totalButtonWidth = imageWidth * numButtons;
+            int availableSpace = windowWidth - totalButtonWidth;
 
-        hEnableAutomaticChannelChangeCheck = CreateWindowW(L"BUTTON", L"\U0001F504 Enable automatic channel switching",
-            WS_CHILD | BS_AUTOCHECKBOX,
-            60, 165, 380, 25, hwnd, (HMENU)203, NULL, NULL);
-        ApplyFontToControl(hEnableAutomaticChannelChangeCheck, hFont);
+            // Check if there is enough space | Vérifier s'il y a assez d'espace
+            if (availableSpace < 0) {
+                if (enableLogGeneral) {
+                    char errorMsg[128];
+                    snprintf(errorMsg, sizeof(errorMsg),
+                        "ERROR: Not enough space for buttons (window: %d, buttons: %d)",
+                        windowWidth, totalButtonWidth);
+                    mumbleAPI.log(ownID, errorMsg);
+                }
+                availableSpace = 20; // Valeur de secours
+            }
 
-        hEnableVoiceToggleCheck = CreateWindowW(L"BUTTON", L"\U0001F504 Enable voice mode toggle button",
-            WS_CHILD | BS_AUTOCHECKBOX,
-            60, 185, 380, 25, hwnd, (HMENU)204, NULL, NULL);
-        ApplyFontToControl(hEnableVoiceToggleCheck, hFont);
+            float edgeGap = (float)availableSpace * edgeToGapRatio / (2.0f * edgeToGapRatio + 2.0f);
+            float internalGap = edgeGap / edgeToGapRatio;
 
-        control = CreateWindowW(L"STATIC", L"\u2328\uFE0F Keyboard Shortcuts",
-            WS_CHILD,
-            40, 270, 250, 25, hwnd, (HMENU)502, NULL, NULL);
-        ApplyFontToControl(control, hFontBold);
+            // Positions calculées dynamiquement
+            int patchX = (int)edgeGap;
+            int advX = patchX + imageWidth + (int)internalGap;
+            int presetsX = advX + imageWidth + (int)internalGap;
 
-        control = CreateWindowW(L"STATIC", L"\U0001F92B Whisper Mode:",
-            WS_CHILD,
-            60, 305, 130, 25, hwnd, (HMENU)503, NULL, NULL);
-        ApplyFontToControl(control, hFont);
+            hCategoryPatch = CreateWindowW(L"BUTTON", L"Patch Configuration",
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+                patchX - 2, 68, imageWidth, imageHeight,
+                hwnd, (HMENU)301, NULL, NULL);
 
-        hWhisperKeyEdit = CreateWindowW(L"EDIT", L"",
-            WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 303, 110, 30, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hWhisperKeyEdit, hFont);
+            hCategoryAdvanced = CreateWindowW(L"BUTTON", L"Advanced Options",
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+                advX, 68, imageWidth, imageHeight, hwnd, (HMENU)302, NULL, NULL);
+            ApplyFontToControl(hCategoryAdvanced, hFontBold);
 
-        hWhisperButton = CreateWindowW(L"BUTTON", L"\u270F\uFE0F Set Key",
-            WS_CHILD,
-            320, 303, 90, 30, hwnd, (HMENU)101, NULL, NULL);
-        ApplyFontToControl(hWhisperButton, hFont);
+            hCategoryPresets = CreateWindowW(L"BUTTON", L"Voice Presets",
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_OWNERDRAW,
+                presetsX + 2, 68, imageWidth, imageHeight, hwnd, (HMENU)303, NULL, NULL);
+            ApplyFontToControl(hCategoryPresets, hFontBold);
+        }
 
-        control = CreateWindowW(L"STATIC", L"\U0001F4AC Normal Chat:",
-            WS_CHILD,
-            60, 340, 130, 25, hwnd, (HMENU)504, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hNormalKeyEdit = CreateWindowW(L"EDIT", L"",
-            WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 338, 110, 30, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hNormalKeyEdit, hFont);
-
-        hNormalButton = CreateWindowW(L"BUTTON", L"\u270F\uFE0F Set Key",
-            WS_CHILD,
-            320, 338, 90, 30, hwnd, (HMENU)102, NULL, NULL);
-        ApplyFontToControl(hNormalButton, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F4E2 Shout Mode:",
-            WS_CHILD,
-            60, 375, 130, 25, hwnd, (HMENU)505, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hShoutKeyEdit = CreateWindowW(L"EDIT", L"",
-            WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 373, 110, 30, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hShoutKeyEdit, hFont);
-
-        hShoutButton = CreateWindowW(L"BUTTON", L"\u270F\uFE0F Set Key",
-            WS_CHILD,
-            320, 373, 90, 30, hwnd, (HMENU)103, NULL, NULL);
-        ApplyFontToControl(hShoutButton, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\u2699\uFE0F Config Panel:",
-            WS_CHILD,
-            60, 410, 130, 25, hwnd, (HMENU)506, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hConfigKeyEdit = CreateWindowW(L"EDIT", L"",
-            WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 408, 110, 30, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hConfigKeyEdit, hFont);
-
-        hConfigButton = CreateWindowW(L"BUTTON", L"\u270F\uFE0F Set Key",
-            WS_CHILD,
-            320, 408, 90, 30, hwnd, (HMENU)104, NULL, NULL);
-        ApplyFontToControl(hConfigButton, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F4A1 Press the assigned key in-game to open this panel",
-            WS_CHILD,
-            60, 445, 400, 25, hwnd, (HMENU)507, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        // Voice toggle settings section | Section des paramètres de basculement vocal
-        control = CreateWindowW(L"STATIC", L"\U0001F504 Voice Toggle Settings",
-            WS_CHILD,
-            40, 480, 250, 25, hwnd, (HMENU)514, NULL, NULL);
-        ApplyFontToControl(control, hFontBold);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F504 Toggle Mode:",
-            WS_CHILD,
-            60, 510, 130, 25, hwnd, (HMENU)513, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hVoiceToggleKeyEdit = CreateWindowW(L"EDIT", L"",
-            WS_CHILD | WS_BORDER | ES_READONLY | ES_CENTER,
-            200, 508, 110, 30, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hVoiceToggleKeyEdit, hFont);
-
-        hVoiceToggleButton = CreateWindowW(L"BUTTON", L"\u270F\uFE0F Set Key",
-            WS_CHILD,
-            320, 508, 90, 30, hwnd, (HMENU)106, NULL, NULL);
-        ApplyFontToControl(hVoiceToggleButton, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F4CF Voice Range Settings (meters)",
-            WS_CHILD,
-            40, 550, 350, 25, hwnd, (HMENU)508, NULL, NULL);
-        ApplyFontToControl(control, hFontBold);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F92B Whisper:",
-            WS_CHILD,
-            60, 585, 90, 25, hwnd, (HMENU)509, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hDistanceWhisperEdit = CreateWindowW(L"EDIT", L"2.0",
-            WS_CHILD | WS_BORDER | ES_CENTER,
-            155, 583, 60, 28, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hDistanceWhisperEdit, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F4AC Normal:",
-            WS_CHILD,
-            230, 585, 80, 25, hwnd, (HMENU)510, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hDistanceNormalEdit = CreateWindowW(L"EDIT", L"10.0",
-            WS_CHILD | WS_BORDER | ES_CENTER,
-            315, 583, 60, 28, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hDistanceNormalEdit, hFont);
-
-        control = CreateWindowW(L"STATIC", L"\U0001F4E2 Shout:",
-            WS_CHILD,
-            390, 585, 70, 25, hwnd, (HMENU)511, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        hDistanceShoutEdit = CreateWindowW(L"EDIT", L"15.0",
-            WS_CHILD | WS_BORDER | ES_CENTER,
-            465, 583, 60, 28, hwnd, NULL, NULL, NULL);
-        ApplyFontToControl(hDistanceShoutEdit, hFont);
-
-        // CORRECTION: Créer les messages CACHÉS par défaut avec WS_CHILD SEULEMENT (pas WS_VISIBLE)
-        hDistanceWhisperMessage = CreateWindowW(L"STATIC", L"",
-            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
-            60, 615, 480, 20, hwnd, (HMENU)520, NULL, NULL);
-        ApplyFontToControl(hDistanceWhisperMessage, hFont);
-
-        hDistanceNormalMessage = CreateWindowW(L"STATIC", L"",
-            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
-            60, 635, 480, 20, hwnd, (HMENU)521, NULL, NULL);
-        ApplyFontToControl(hDistanceNormalMessage, hFont);
-
-        hDistanceShoutMessage = CreateWindowW(L"STATIC", L"",
-            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
-            60, 655, 480, 20, hwnd, (HMENU)522, NULL, NULL);
-        ApplyFontToControl(hDistanceShoutMessage, hFont);
-
-        // CORRECTION: Distance-based muting message - CACHÉ par défaut
-        hDistanceMutingMessage = CreateWindowW(L"STATIC", L"",
-            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
-            60, 210, 460, 18, hwnd, (HMENU)523, NULL, NULL);
-        ApplyFontToControl(hDistanceMutingMessage, hFont);
-
-        // CORRECTION: Automatic channel switching message - CACHÉ par défaut
-        hChannelSwitchingMessage = CreateWindowW(L"STATIC", L"",
-            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
-            60, 230, 460, 18, hwnd, (HMENU)524, NULL, NULL);
-        ApplyFontToControl(hChannelSwitchingMessage, hFont);
-
-        // CORRECTION: Positional audio message - CACHÉ par défaut
-        hPositionalAudioMessage = CreateWindowW(L"STATIC", L"",
-            WS_CHILD | SS_LEFT,  // PAS DE WS_VISIBLE ICI
-            60, 250, 460, 18, hwnd, (HMENU)525, NULL, NULL);
-        ApplyFontToControl(hPositionalAudioMessage, hFont);
-
-        // Main buttons | Boutons principaux
-        control = CreateWindowW(L"BUTTON", L"Save Configuration",
-            WS_VISIBLE | WS_CHILD,
-            140, 690, 160, 40, hwnd, (HMENU)1, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        control = CreateWindowW(L"BUTTON", L"Cancel",
-            WS_VISIBLE | WS_CHILD,
-            320, 690, 120, 40, hwnd, (HMENU)2, NULL, NULL);
-        ApplyFontToControl(control, hFont);
-
-        // Status message display area | Zone d'affichage des messages de statut
-        hStatusMessage = CreateWindowW(L"STATIC", L"",
-            WS_VISIBLE | WS_CHILD | SS_CENTER,
-            40, 740, 520, 25, hwnd, (HMENU)600, NULL, NULL);
-        ApplyFontToControl(hStatusMessage, hFont);
-
-        loadVoiceDistancesFromConfig();
+        // Create background image first | Créer d'abord l'image de fond
+        hSavedPathBg = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_OWNERDRAW,
+            40, 270, 380, 35, hwnd, (HMENU)1100, NULL, NULL);
 
         // Load current values from configuration | Charger les valeurs actuelles depuis la configuration
         wchar_t gamePathFromConfig[MAX_PATH] = L"";
+        wchar_t savedPathFromConfig[MAX_PATH] = L""; // ✅ Pour stocker le chemin COMPLET du fichier de config
 
         // Read path from config file | Lire le chemin depuis le fichier de config
         wchar_t* configFolder = getConfigFolderPath();
@@ -3820,25 +5194,303 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                         wchar_t* cr = wcschr(pathStart, L'\r');
                         if (cr) *cr = L'\0';
 
-                        // Extract parent directory | Extraire le répertoire parent
-                        wcscpy_s(gamePathFromConfig, MAX_PATH, pathStart);
-                        wchar_t* conanSandbox = wcsstr(gamePathFromConfig, L"\\ConanSandbox\\Saved");
+                        // ✅ CORRECTION : Stocker le chemin COMPLET depuis la config
+                        wcscpy_s(savedPathFromConfig, MAX_PATH, pathStart);
+
+                        // ✅ Extraire le répertoire parent UNIQUEMENT pour l'affichage
+                        wcscpy_s(displayedPathText, MAX_PATH, pathStart);
+                        wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
                         if (conanSandbox) {
-                            *conanSandbox = L'\0';
+                            *conanSandbox = L'\0'; // Tronquer pour affichage
                         }
                         break;
                     }
                 }
                 fclose(f);
-                wchar_t* nl = wcschr(savedPath, L'\n');
-                if (nl) *nl = L'\0';
-                wchar_t* cr = wcschr(savedPath, L'\r');
-                if (cr) *cr = L'\0';
-                size_t converted = 0;
-                wcstombs_s(&converted, modFilePath, MAX_PATH, savedPath, _TRUNCATE);
-                snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePath);
             }
         }
+
+        // ✅ Si aucun chemin dans la config, utiliser les valeurs par défaut
+        if (wcslen(displayedPathText) == 0) {
+            wcscpy_s(displayedPathText, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles");
+            wcscpy_s(savedPathFromConfig, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+        }
+
+        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+            InvalidateRect(hSavedPathBg, NULL, TRUE);
+            UpdateWindow(hSavedPathBg);
+        }
+
+        HMODULE hModule = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)ConfigDialogProc, &hModule);
+
+
+        hPathBoxBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Path_Box),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        int pathBoxWidth = 380;
+        int pathBoxHeight = 35;
+        if (hPathBoxBitmap) {
+            BITMAP bmPath;
+            GetObject(hPathBoxBitmap, sizeof(BITMAP), &bmPath);
+            pathBoxWidth = bmPath.bmWidth;
+            pathBoxHeight = bmPath.bmHeight;
+            SendMessage(hSavedPathBg, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)hPathBoxBitmap);
+        }
+
+        HBITMAP hBrowseTemp = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Browse_Button),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        int browseBtnWidth = 100;
+        int browseBtnHeight = 35;
+        if (hBrowseTemp) {
+            BITMAP bmBrowse;
+            GetObject(hBrowseTemp, sizeof(BITMAP), &bmBrowse);
+            browseBtnWidth = bmBrowse.bmWidth;
+            browseBtnHeight = bmBrowse.bmHeight;
+            DeleteObject(hBrowseTemp);
+        }
+
+        int pathX = 40;
+        int pathY = 270;
+        int browseGap = 10;
+        int browseX = pathX + pathBoxWidth + browseGap;
+        int browseY = pathY + ((pathBoxHeight - browseBtnHeight) / 2);
+
+        hSavedPathButton = CreateWindowW(L"BUTTON", L"Browse",
+            WS_CHILD | BS_OWNERDRAW,
+            browseX, browseY, browseBtnWidth, browseBtnHeight, hwnd, (HMENU)105, NULL, NULL);
+        ApplyFontToControl(hSavedPathButton, hFontBold);
+
+        // ========== CATÉGORIE 2 : ADVANCED OPTIONS ==========
+
+        // === CHECKBOX 1 : Distance-based muting ===
+        hEnableDistanceMutingCheck = CreateWindowW(L"BUTTON", L"",
+            WS_CHILD | BS_AUTOCHECKBOX,  // ✅ WS_CHILD uniquement (pas WS_VISIBLE)
+            60, 145, 20, 20, hwnd, (HMENU)201, NULL, NULL);
+
+        HMODULE hModuleIcon = GetModuleHandleW(NULL);
+        HICON hCheckIcon = (HICON)LoadImageW(hModuleIcon, MAKEINTRESOURCEW(IDI_CHECKMARK),
+            IMAGE_ICON, 13, 13, LR_DEFAULTCOLOR);
+        if (hCheckIcon) {
+            SendMessage(hEnableDistanceMutingCheck, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hCheckIcon);
+        }
+
+        HWND hDistanceMutingLabel = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT | SS_NOTIFY,  // ✅ ENLEVER WS_VISIBLE
+            85, 147, 295, 20, hwnd, (HMENU)2001, NULL, NULL);
+        ApplyFontToControl(hDistanceMutingLabel, hFont);
+
+        SetWindowSubclass(hDistanceMutingLabel, CheckboxLabelProc, 201, (DWORD_PTR)hEnableDistanceMutingCheck);
+
+
+        // === CHECKBOX 2 : Automatic channel switching ===
+        hEnableAutomaticChannelChangeCheck = CreateWindowW(L"BUTTON", L"",
+            WS_CHILD | BS_AUTOCHECKBOX,  // ✅ WS_CHILD uniquement
+            60, 165, 20, 20, hwnd, (HMENU)203, NULL, NULL);
+
+        if (hCheckIcon) {
+            SendMessage(hEnableAutomaticChannelChangeCheck, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hCheckIcon);
+        }
+
+        HWND hChannelSwitchingLabel = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT | SS_NOTIFY,  // ✅ ENLEVER WS_VISIBLE
+            85, 167, 375, 20, hwnd, (HMENU)2002, NULL, NULL);
+        ApplyFontToControl(hChannelSwitchingLabel, hFont);
+
+        SetWindowSubclass(hChannelSwitchingLabel, CheckboxLabelProc, 203, (DWORD_PTR)hEnableAutomaticChannelChangeCheck);
+
+
+        // === CHECKBOX 3 : Voice toggle ===
+        hEnableVoiceToggleCheck = CreateWindowW(L"BUTTON", L"",
+            WS_CHILD | BS_AUTOCHECKBOX,  // ✅ WS_CHILD uniquement
+            60, 185, 20, 20, hwnd, (HMENU)204, NULL, NULL);
+
+        if (hCheckIcon) {
+            SendMessage(hEnableVoiceToggleCheck, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hCheckIcon);
+        }
+
+        HWND hVoiceToggleLabel = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT | SS_NOTIFY,  // ✅ ENLEVER WS_VISIBLE
+            85, 187, 375, 20, hwnd, (HMENU)2003, NULL, NULL);
+        ApplyFontToControl(hVoiceToggleLabel, hFont);
+
+        SetWindowSubclass(hVoiceToggleLabel, CheckboxLabelProc, 204, (DWORD_PTR)hEnableVoiceToggleCheck);
+
+        // Get real dimensions of IDB_Key_Box_01 | Récupérer les dimensions réelles de IDB_Key_Box_01
+        HMODULE hModuleKey = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)ConfigDialogProc, &hModuleKey);
+
+        HBITMAP hKeyBoxTemp = (HBITMAP)LoadImageW(hModuleKey, MAKEINTRESOURCEW(IDB_Key_Box_01),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+        int keyBoxWidth = 110;  // Valeur par défaut
+        int keyBoxHeight = 30;  // Valeur par défaut
+
+        if (hKeyBoxTemp) {
+            BITMAP bmKey;
+            GetObject(hKeyBoxTemp, sizeof(BITMAP), &bmKey);
+            keyBoxWidth = bmKey.bmWidth;
+            keyBoxHeight = bmKey.bmHeight;
+            DeleteObject(hKeyBoxTemp);
+
+            if (enableLogGeneral) {
+                char logMsg[128];
+                snprintf(logMsg, sizeof(logMsg),
+                    "IDB_Key_Box_01 size: %dx%d pixels", keyBoxWidth, keyBoxHeight);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        // Create all key edit and button controls with Patch Configuration style | Créer tous les contrôles avec le style de Patch Configuration
+        hWhisperKeyEdit = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_OWNERDRAW,
+            200, 303, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)2001, NULL, NULL);
+        ApplyFontToControl(hWhisperKeyEdit, hFont);
+
+        hWhisperButton = CreateWindowW(L"BUTTON", L"Set Key",
+            WS_CHILD | BS_OWNERDRAW,
+            200 + keyBoxWidth + 10, 303, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)101, NULL, NULL);
+        ApplyFontToControl(hWhisperButton, hFontBold);
+
+        hNormalKeyEdit = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_OWNERDRAW,
+            200, 338, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)2002, NULL, NULL);
+        ApplyFontToControl(hNormalKeyEdit, hFont);
+
+        hNormalButton = CreateWindowW(L"BUTTON", L"Set Key",
+            WS_CHILD | BS_OWNERDRAW,
+            200 + keyBoxWidth + 10, 338, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)102, NULL, NULL);
+        ApplyFontToControl(hNormalButton, hFontBold);
+
+        hShoutKeyEdit = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_OWNERDRAW,
+            200, 373, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)2003, NULL, NULL);
+        ApplyFontToControl(hShoutKeyEdit, hFont);
+
+        hShoutButton = CreateWindowW(L"BUTTON", L"Set Key",
+            WS_CHILD | BS_OWNERDRAW,
+            200 + keyBoxWidth + 10, 373, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)103, NULL, NULL);
+        ApplyFontToControl(hShoutButton, hFontBold);
+
+        hConfigKeyEdit = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_OWNERDRAW,
+            200, 408, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)2004, NULL, NULL);
+        ApplyFontToControl(hConfigKeyEdit, hFont);
+
+        hConfigButton = CreateWindowW(L"BUTTON", L"Set Key",
+            WS_CHILD | BS_OWNERDRAW,
+            200 + keyBoxWidth + 10, 408, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)104, NULL, NULL);
+        ApplyFontToControl(hConfigButton, hFontBold);
+
+        hVoiceToggleKeyEdit = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_OWNERDRAW,
+            200, 485, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)2005, NULL, NULL);
+        ApplyFontToControl(hVoiceToggleKeyEdit, hFont);
+
+        hVoiceToggleButton = CreateWindowW(L"BUTTON", L"Set Key",
+            WS_CHILD | BS_OWNERDRAW,
+            200 + keyBoxWidth + 10, 485, keyBoxWidth, keyBoxHeight, hwnd, (HMENU)106, NULL, NULL);
+        ApplyFontToControl(hVoiceToggleButton, hFontBold);
+
+        hDistanceWhisperEdit = CreateWindowW(L"EDIT", L"2.0",
+            WS_CHILD | WS_BORDER | ES_CENTER,
+            155, 550, 60, 28, hwnd, NULL, NULL, NULL);
+        ApplyFontToControl(hDistanceWhisperEdit, hFont);
+
+        hDistanceNormalEdit = CreateWindowW(L"EDIT", L"15.0",
+            WS_CHILD | WS_BORDER | ES_CENTER,
+            315, 550, 60, 28, hwnd, NULL, NULL, NULL);
+        ApplyFontToControl(hDistanceNormalEdit, hFont);
+
+        hDistanceShoutEdit = CreateWindowW(L"EDIT", L"50.0",
+            WS_CHILD | WS_BORDER | ES_CENTER,
+            465, 550, 60, 28, hwnd, NULL, NULL, NULL);
+        ApplyFontToControl(hDistanceShoutEdit, hFont);
+
+        createPresetsCategory();
+
+        hDistanceWhisperMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,
+            60, 585, 480, 20, hwnd, (HMENU)520, NULL, NULL);
+        ApplyFontToControl(hDistanceWhisperMessage, hFont);
+
+        hDistanceNormalMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,
+            60, 600, 480, 20, hwnd, (HMENU)521, NULL, NULL);
+        ApplyFontToControl(hDistanceNormalMessage, hFont);
+
+        hDistanceShoutMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,
+            60, 615, 480, 20, hwnd, (HMENU)522, NULL, NULL);
+        ApplyFontToControl(hDistanceShoutMessage, hFont);
+
+        hDistanceMutingMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,
+            60, 210, 460, 18, hwnd, (HMENU)523, NULL, NULL);
+        ApplyFontToControl(hDistanceMutingMessage, hFont);
+
+        hChannelSwitchingMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,
+            60, 230, 460, 18, hwnd, (HMENU)524, NULL, NULL);
+        ApplyFontToControl(hChannelSwitchingMessage, hFont);
+
+        hPositionalAudioMessage = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | SS_LEFT,
+            60, 250, 460, 18, hwnd, (HMENU)525, NULL, NULL);
+        ApplyFontToControl(hPositionalAudioMessage, hFont);
+
+        const wchar_t* saveConfigText = L"Save Configuration";
+        const wchar_t* saveVoiceRangeText = L"Save Voice Range";
+        const wchar_t* cancelText = L"Cancel";
+
+        int bottomBtnWidth = imageWidth;
+        int bottomBtnHeight = imageHeight;
+
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+        int clientWidth = clientRect.right - clientRect.left;
+
+        const int gap = 9;
+        const int btnY = 654;
+
+        // Centrer les trois boutons en utilisant la largeur réelle de l'image
+        int totalWidth = bottomBtnWidth * 3 + gap * 2;
+        int startX = (clientWidth - totalWidth) / 2;
+        if (startX < 10) startX = 10;
+
+        int saveVoiceRangeX = startX;
+        int saveConfigX = startX + bottomBtnWidth + gap;
+        int cancelX = startX + (bottomBtnWidth + gap) * 2;
+
+        // Créer les boutons avec BS_OWNERDRAW — DrawButtonWithBitmap dessinera l'image à taille réelle
+        control = CreateWindowW(L"BUTTON", saveVoiceRangeText,
+            WS_CHILD | BS_OWNERDRAW,  // Caché par défaut
+            saveVoiceRangeX, btnY, bottomBtnWidth, bottomBtnHeight, hwnd, (HMENU)11, NULL, NULL);
+        ApplyFontToControl(control, hFont);
+
+        control = CreateWindowW(L"BUTTON", saveConfigText,
+            WS_CHILD | BS_OWNERDRAW,
+            saveConfigX, btnY, bottomBtnWidth, bottomBtnHeight, hwnd, (HMENU)1, NULL, NULL);
+        ApplyFontToControl(control, hFont);
+
+        control = CreateWindowW(L"BUTTON", cancelText,
+            WS_CHILD | BS_OWNERDRAW,
+            cancelX, btnY, bottomBtnWidth, bottomBtnHeight, hwnd, (HMENU)2, NULL, NULL);
+        ApplyFontToControl(control, hFont);
+
+        // Status message (toujours visible)
+        hStatusMessage = CreateWindowW(L"STATIC", L"",
+            WS_VISIBLE | WS_CHILD | SS_CENTER,
+            40, 740, 520, 25, hwnd, (HMENU)600, NULL, NULL);
+        ApplyFontToControl(hStatusMessage, hFont);
+
+        // ✅ 8) CHARGER LES VALEURS (une seule fois)
+        loadVoiceDistancesFromConfig();
+
+        ShowCategoryControls(1);
 
         // Set actual values | Définir les valeurs réelles
         if (wcslen(gamePathFromConfig) > 0) {
@@ -3876,69 +5528,160 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             mumbleAPI.log(ownID, debugMsg);
         }
 
+        // Create preset category controls | Créer les contrôles de la catégorie presets
+        createPresetsCategory();
+
+        // Load presets from config | Charger les presets depuis la configuration
+        loadPresetsFromConfigFile();
+
+        ShowCategoryControls(1);
+
         break;
+
+case WM_ERASEBKGND: {
+    HDC hdc = (HDC)wParam;
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+
+    int winW = rect.right - rect.left;
+    int winH = rect.bottom - rect.top;
+
+    // CATÉGORIE 1 : Afficher BACKGROUND.bmp | Category 1: Display BACKGROUND.bmp
+    if (currentCategory == 1 && hBackgroundBitmap) {
+        HDC hdcMem = CreateCompatibleDC(hdc);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBackgroundBitmap);
+
+        BITMAP bm;
+        GetObject(hBackgroundBitmap, sizeof(BITMAP), &bm);
+
+        SetStretchBltMode(hdc, HALFTONE);
+        StretchBlt(hdc,
+            0, 0, winW, winH,
+            hdcMem,
+            0, 0, bm.bmWidth, bm.bmHeight,
+            SRCCOPY);
+
+        SelectObject(hdcMem, hOldBitmap);
+        DeleteDC(hdcMem);
+    }
+    // CATÉGORIE 2 : Afficher BACKGROUND_Plugin_Settings | Category 2: Display BACKGROUND_Plugin_Settings
+    else if (currentCategory == 2 && hBackgroundAdvancedBitmap) {
+        HDC hdcMem = CreateCompatibleDC(hdc);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBackgroundAdvancedBitmap);
+
+        BITMAP bm;
+        GetObject(hBackgroundAdvancedBitmap, sizeof(BITMAP), &bm);
+
+        SetStretchBltMode(hdc, HALFTONE);
+        StretchBlt(hdc,
+            0, 0, winW, winH,
+            hdcMem,
+            0, 0, bm.bmWidth, bm.bmHeight,
+            SRCCOPY);
+
+        SelectObject(hdcMem, hOldBitmap);
+        DeleteDC(hdcMem);
+    }
+    // CATÉGORIE 3 : Afficher Background_Voice_Presets | Category 3: Display Background_Voice_Presets
+    else if (currentCategory == 3 && hBackgroundPresetsBitmap) {
+        HDC hdcMem = CreateCompatibleDC(hdc);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBackgroundPresetsBitmap);
+
+        BITMAP bm;
+        GetObject(hBackgroundPresetsBitmap, sizeof(BITMAP), &bm);
+
+        SetStretchBltMode(hdc, HALFTONE);
+        StretchBlt(hdc,
+            0, 0, winW, winH,
+            hdcMem,
+            0, 0, bm.bmWidth, bm.bmHeight,
+            SRCCOPY);
+
+        SelectObject(hdcMem, hOldBitmap);
+        DeleteDC(hdcMem);
+    }
+    else {
+        // Fallback : Fond uni pour toutes les catégories sans image | Fallback: Solid background for all categories without image
+        HBRUSH hBrush = CreateSolidBrush(RGB(248, 249, 250));
+        FillRect(hdc, &rect, hBrush);
+        DeleteObject(hBrush);
+    }
+
+    return 1;
+}
 
     case WM_CTLCOLORSTATIC: {
         HDC hdcStatic = (HDC)wParam;
         HWND hwndStatic = (HWND)lParam;
         int controlId = GetDlgCtrlID(hwndStatic);
 
-        // Colors for consolidated messages | Couleurs pour les messages consolidés
-        if (controlId >= 520 && controlId <= 528) {
-            wchar_t messageText[300];
-            GetWindowTextW(hwndStatic, messageText, 300);
+        SetBkMode(hdcStatic, TRANSPARENT);
 
-            if (wcsstr(messageText, L"📋") && wcsstr(messageText, L"None")) {
-                SetTextColor(hdcStatic, RGB(59, 130, 246));
+        wchar_t messageText[300];
+        GetWindowTextW(hwndStatic, messageText, 300);
+
+        // ========== TEXTES D'INFORMATION (IDs 401, 402, 403) EN BLEU ==========
+        if (controlId >= 401 && controlId <= 403) {
+            SetTextColor(hdcStatic, RGB(0, 0, 0)); // Noir
+        }
+        // ========== MESSAGES DE VALIDATION DE RANGE (BLEU) ==========
+        // IDs 520-522 = Messages whisper/normal/shout au bas de l'interface
+        else if (controlId >= 520 && controlId <= 522) {
+            // Si le message contient "Valid range" ou "Free range" → BLEU
+            if (wcsstr(messageText, L"Valid range") || wcsstr(messageText, L"Free range")) {
+                SetTextColor(hdcStatic, RGB(59, 130, 246)); // Bleu vif
             }
-            else if (wcsstr(messageText, L"📋") && wcsstr(messageText, L"Enforced")) {
-                SetTextColor(hdcStatic, RGB(251, 146, 60));
-            }
-            else if (wcsstr(messageText, L"🔴") || wcsstr(messageText, L"Auto-corrected")) {
-                SetTextColor(hdcStatic, RGB(220, 38, 38));
-            }
-            else if (wcsstr(messageText, L"🟢") || wcsstr(messageText, L"Valid range") || wcsstr(messageText, L"Free range")) {
-                SetTextColor(hdcStatic, RGB(34, 197, 94));
-            }
-            else if (wcsstr(messageText, L"LOCKED") || wcsstr(messageText, L"FORCED")) {
-                SetTextColor(hdcStatic, RGB(251, 146, 60));
-            }
-            else if (wcsstr(messageText, L"INFO")) {
-                SetTextColor(hdcStatic, RGB(59, 130, 246));
+            // Si le message contient "Auto-corrected" → ROUGE
+            else if (wcsstr(messageText, L"Auto-corrected")) {
+                SetTextColor(hdcStatic, RGB(220, 38, 38)); // Rouge
             }
             else {
-                SetTextColor(hdcStatic, RGB(107, 114, 128));
+                SetTextColor(hdcStatic, RGB(107, 114, 128)); // Gris par défaut
             }
         }
-
+        // ========== MESSAGES DE STATUT (IDs 523-525) ==========
+        // Distance Muting, Channel Switching, Positional Audio
+        else if (controlId >= 523 && controlId <= 525) {
+            // ✅ CORRECTION : Vérifier "INFO" EN PREMIER (avant LOCKED/FORCED)
+            if (wcsstr(messageText, L"INFO:")) {
+                SetTextColor(hdcStatic, RGB(59, 130, 246)); // BLEU pour INFO
+            }
+            // Si le message contient "LOCKED" ou "FORCED" → ROUGE FONCÉ
+            else if (wcsstr(messageText, L"LOCKED") || wcsstr(messageText, L"FORCED") ||
+                wcsstr(messageText, L"ACTIVE")) {
+                SetTextColor(hdcStatic, RGB(139, 0, 0)); // Rouge foncé (DarkRed)
+            }
+            // Si le message contient "OK" ou "Enabled" → VERT
+            else if (wcsstr(messageText, L"OK") || wcsstr(messageText, L"Enabled")) {
+                SetTextColor(hdcStatic, RGB(34, 197, 94)); // Vert
+            }
+            else {
+                SetTextColor(hdcStatic, RGB(107, 114, 128)); // Gris
+            }
+        }
+        // ========== MESSAGE DE STATUT EN BAS (ID 600) ==========
         else if (controlId == 600) {
-            wchar_t messageText[256];
-            GetWindowTextW(hwndStatic, messageText, 256);
-
-            // Detect message type by content | Détecter le type de message par son contenu
-            if (wcsstr(messageText, L"\u26A0") || wcsstr(messageText, L"Error") || wcsstr(messageText, L"does not exist")) {
-                SetTextColor(hdcStatic, RGB(220, 53, 69));
+            // Erreurs → ROUGE
+            if (wcsstr(messageText, L"\u26A0") || wcsstr(messageText, L"Error") ||
+                wcsstr(messageText, L"does not exist")) {
+                SetTextColor(hdcStatic, RGB(220, 53, 69)); // Rouge vif
             }
-            else if (wcsstr(messageText, L"\u2705") || wcsstr(messageText, L"\u2699") || wcsstr(messageText, L"success")) {
-                SetTextColor(hdcStatic, RGB(40, 167, 69));
+            // Succès → VERT
+            else if (wcsstr(messageText, L"\u2705") || wcsstr(messageText, L"\u2699") ||
+                wcsstr(messageText, L"success")) {
+                SetTextColor(hdcStatic, RGB(40, 167, 69)); // Vert
             }
             else {
-                SetTextColor(hdcStatic, RGB(108, 117, 125));
+                SetTextColor(hdcStatic, RGB(108, 117, 125)); // Gris
             }
         }
+        // ========== AUTRES TEXTES (COULEUR PAR DÉFAUT) ==========
         else {
-            SetTextColor(hdcStatic, RGB(33, 37, 41));
+            SetTextColor(hdcStatic, RGB(33, 37, 41)); // Gris très foncé
         }
 
-        SetBkColor(hdcStatic, RGB(248, 249, 250));
+        // ✅ Retourner NULL_BRUSH pour fond transparent
         return (LRESULT)GetStockObject(NULL_BRUSH);
-    }
-
-    case WM_CTLCOLOREDIT: {
-        HDC hdcEdit = (HDC)wParam;
-        SetTextColor(hdcEdit, RGB(33, 37, 41));
-        SetBkColor(hdcEdit, RGB(255, 255, 255));
-        return (LRESULT)GetStockObject(WHITE_BRUSH);
     }
 
     case WM_COMMAND:
@@ -3948,6 +5691,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             ShowCategoryControls(2);
             updateConsolidatedDistanceMessages();
             break;
+        case 303: ShowCategoryControls(3); break;
         case 105: browseSavedPath(hwnd); break;
 
         case 101:
@@ -3973,87 +5717,367 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             EnableWindow(hWhisperButton, FALSE); EnableWindow(hNormalButton, FALSE);
             EnableWindow(hShoutButton, FALSE); EnableWindow(hConfigButton, FALSE);
             SetWindowTextA(hConfigKeyEdit, "Press key..."); break;
+
         case 106:
             isCapturingKey = TRUE; captureKeyTarget = 5;
             EnableWindow(hWhisperButton, FALSE); EnableWindow(hNormalButton, FALSE);
             EnableWindow(hShoutButton, FALSE); EnableWindow(hConfigButton, FALSE);
             EnableWindow(hVoiceToggleButton, FALSE);
             SetWindowTextA(hVoiceToggleKeyEdit, "Press key..."); break;
-        case 201:
+
+        case 201: // Distance Muting checkbox
             if (HIWORD(wParam) == BN_CLICKED) {
                 if (hubForceDistanceBasedMuting) {
-                    // Prevent unchecking if forced by server | Empêcher de décocher si forcé par le serveur
+                    // Serveur force -> garder coché
                     CheckDlgButton(hwnd, 201, BST_CHECKED);
-                    showStatusMessage(L"🔒 Cannot disable distance-based muting: This setting is enforced by the server", TRUE);
+                    enableDistanceMuting = TRUE;
+                    showStatusMessage(L"Cannot disable: enforced by server", TRUE);
                     MessageBeep(MB_ICONWARNING);
                 }
                 else {
+                    // Toggle normal géré par Windows
                     enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
                     updateDynamicInterface();
                 }
             }
             break;
-        case 203:
+
+        case 203: // Automatic Channel Change checkbox
             if (HIWORD(wParam) == BN_CLICKED) {
                 if (hubForceAutomaticChannelSwitching) {
+                    // Serveur force -> garder coché
                     CheckDlgButton(hwnd, 203, BST_CHECKED);
-                    showStatusMessage(L"Cannot disable automatic channel switching: This setting is enforced by the server", TRUE);
+                    enableAutomaticChannelChange = TRUE;
+                    showStatusMessage(L"Cannot disable: enforced by server", TRUE);
                     MessageBeep(MB_ICONWARNING);
                 }
                 else {
+                    // Toggle normal géré par Windows
                     enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
                     updateDynamicInterface();
                 }
             }
             break;
 
-        case 1: {
-            wchar_t gameFolder[MAX_PATH];
-            GetWindowTextW(hSavedPathEdit, gameFolder, MAX_PATH);
-
-            if (!savedExistsInFolder(gameFolder)) {
-                showStatusMessage(L"\u26A0\uFE0F The 'Saved' folder does not exist in ConanSandbox. It must be present for the plugin to work.", TRUE);
-                break;
+        case 204: // Voice Toggle checkbox
+            if (HIWORD(wParam) == BN_CLICKED) {
+                // Pas de verrou serveur - toggle normal
+                enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
             }
+            break;
 
-            // Display save message immediately | Afficher immédiatement le message de sauvegarde
-            showStatusMessage(L"⏳ Saving configuration...", FALSE);
+        case 1: { // Save Configuration (Patch + Advanced)
+            if (currentCategory == 1) {
+                // === CATÉGORIE 1 : PATCH CONFIGURATION ===
 
-            // Force interface redraw | Forcer le redessin de l'interface
-            UpdateWindow(hwnd);
+                // ✅ 1) Vérifier que displayedPathText contient un chemin valide
+                if (wcslen(displayedPathText) == 0) {
+                    showStatusMessage(L"⚠ Error: No game path specified", TRUE);
+                    MessageBoxW(hwnd,
+                        L"Please select your Conan Exiles game folder using the Browse button.",
+                        L"Missing Path", MB_OK | MB_ICONWARNING);
+                    break;
+                }
 
-            // Apply values immediately | Appliquer immédiatement les valeurs
+                showStatusMessage(L"Validating game folder...", FALSE);
+                UpdateWindow(hwnd);
+
+                // ✅ 2) Vérifier UNIQUEMENT que le dossier ConanSandbox\Saved existe (pas Pos.txt)
+                wchar_t savedFolderPath[MAX_PATH];
+                wcscpy_s(savedFolderPath, MAX_PATH, displayedPathText);
+
+                // Si le chemin ne se termine pas par \Saved, l'ajouter
+                if (!wcsstr(savedFolderPath, L"\\ConanSandbox\\Saved")) {
+                    wcscat_s(savedFolderPath, MAX_PATH, L"\\ConanSandbox\\Saved");
+                }
+
+                DWORD savedAttribs = GetFileAttributesW(savedFolderPath);
+                if (savedAttribs == INVALID_FILE_ATTRIBUTES || !(savedAttribs & FILE_ATTRIBUTE_DIRECTORY)) {
+                    showStatusMessage(L"⚠ Error: ConanSandbox\\Saved folder not found", TRUE);
+
+                    wchar_t errorMsg[512];
+                    swprintf(errorMsg, 512,
+                        L"The folder 'ConanSandbox\\Saved' does not exist in:\n%s\n\n"
+                        L"Please verify:\n"
+                        L"1. This is your Conan Exiles game folder\n",
+                        displayedPathText);
+
+                    MessageBoxW(hwnd, errorMsg, L"Folder Not Found", MB_OK | MB_ICONERROR);
+                    break;
+                }
+
+                // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
+                showStatusMessage(L"Saving patch configuration...", FALSE);
+                UpdateWindow(hwnd);
+
+                wchar_t distWhisper[32], distNormal[32], distShout[32];
+                swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
+                swprintf(distNormal, 32, L"%.1f", distanceNormal);
+                swprintf(distShout, 32, L"%.1f", distanceShout);
+
+                // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
+                wchar_t gameFolder[MAX_PATH];
+                wcscpy_s(gameFolder, MAX_PATH, displayedPathText);
+                wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+                if (conanSandbox) {
+                    *conanSandbox = L'\0';
+                }
+
+                BOOL wasAlreadySaved = isPatchAlreadySaved();
+
+                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+                if (!wasAlreadySaved) {
+                    showStatusMessage(L"✅ Patch configuration saved successfully!", FALSE);
+                }
+                else {
+                    showStatusMessage(L"✅ Patch configuration updated successfully!", FALSE);
+                }
+
+                if (enableLogConfig) {
+                    char logMsg[512];
+                    size_t converted = 0;
+                    char savedPathUtf8[MAX_PATH];
+                    wcstombs_s(&converted, savedPathUtf8, MAX_PATH, savedFolderPath, _TRUNCATE);
+
+                    snprintf(logMsg, sizeof(logMsg),
+                        "✅ SECURITY PASSED: Saved folder verified at: %s",
+                        savedPathUtf8);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+            else if (currentCategory == 2) {
+                // === CATÉGORIE 2 : ADVANCED OPTIONS ===
+                // ✅ CORRECTION : Récupérer TOUTES les valeurs de l'interface (comme Patch Config)
+
+                // Récupérer les touches clavier depuis l'interface
+                // (Les valeurs sont déjà dans whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey
+                // car elles sont mises à jour lors de la capture de touche)
+
+                // Récupérer les checkboxes
+                enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+                enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+                enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
+
+                // Récupérer les distances
+                wchar_t distWhisper[32], distNormal[32], distShout[32];
+                GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
+                GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
+                GetWindowTextW(hDistanceShoutEdit, distShout, 32);
+
+                // Convertir les distances
+                distanceWhisper = (float)_wtof(distWhisper);
+                distanceNormal = (float)_wtof(distNormal);
+                distanceShout = (float)_wtof(distShout);
+
+                // ✅ SAUVEGARDER AVEC writeFullConfiguration (comme Patch Config)
+                // pour inclure TOUTES les touches clavier
+                wchar_t gameFolder[MAX_PATH] = L"";
+
+                // Récupérer le chemin du jeu depuis le fichier de config
+                wchar_t* configFolder = getConfigFolderPath();
+                if (configFolder) {
+                    wchar_t configFile[MAX_PATH];
+                    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+                    FILE* f = _wfopen(configFile, L"r");
+                    if (f) {
+                        wchar_t line[512];
+                        while (fgetws(line, 512, f)) {
+                            if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+                                wchar_t* pathStart = line + 10;
+                                wchar_t* nl = wcschr(pathStart, L'\n');
+                                if (nl) *nl = L'\0';
+                                wchar_t* cr = wcschr(pathStart, L'\r');
+                                if (cr) *cr = L'\0';
+
+                                // Extraire le dossier parent (sans ConanSandbox\Saved)
+                                wcscpy_s(gameFolder, MAX_PATH, pathStart);
+                                wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+                                if (conanSandbox) {
+                                    *conanSandbox = L'\0';
+                                }
+                                break;
+                            }
+                        }
+                        fclose(f);
+                    }
+                }
+
+                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+                // Restaurer le mode vocal
+                float currentVoiceDistance = localVoiceData.voiceDistance;
+                if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+                    fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+                    localVoiceData.voiceDistance = distanceWhisper;
+                }
+                else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+                    localVoiceData.voiceDistance = distanceShout;
+                }
+                else {
+                    localVoiceData.voiceDistance = distanceNormal;
+                }
+
+                // Appliquer les changements
+                applyDistanceToAllPlayers();
+
+                showStatusMessage(L"Advanced options saved successfully!", FALSE);
+
+                if (enableLogConfig) {
+                    char logMsg[512];
+                    snprintf(logMsg, sizeof(logMsg),
+                        "✅ ADVANCED OPTIONS SAVED: WhisperKey=%d NormalKey=%d ShoutKey=%d ConfigKey=%d VoiceToggleKey=%d Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
+                        whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey,
+                        distanceWhisper, distanceNormal, distanceShout,
+                        enableDistanceMuting ? "true" : "false",
+                        enableAutomaticChannelChange ? "true" : "false",
+                        enableVoiceToggle ? "true" : "false");
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+            break;
+        }
+
+        case 11: { // Save Voice Range (Advanced Options)
+            showPresetSaveDialog();
+            break;
+        }
+
+        case 12: { // Save Configuration (Advanced Options - save ALL to plugin.cfg)
+            // Save current voice mode before modifying | Sauvegarder le mode vocal actuel
+            float currentVoiceDistance = localVoiceData.voiceDistance;
+
+            // Get values from interface | Récupérer les valeurs de l'interface
             enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
             enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
             enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
 
-            // Get values | Récupérer les valeurs
             wchar_t distWhisper[32], distNormal[32], distShout[32];
             GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
             GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
             GetWindowTextW(hDistanceShoutEdit, distShout, 32);
 
-            // Check if already saved before saving | Vérifier si c'était déjà sauvé AVANT la sauvegarde
-            BOOL wasAlreadySaved = isPatchAlreadySaved();
+            // Convert distances | Convertir les distances
+            float whisperValue = (float)_wtof(distWhisper);
+            float normalValue = (float)_wtof(distNormal);
+            float shoutValue = (float)_wtof(distShout);
 
-            // Perform save | Effectuer la sauvegarde
-            writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+            // Update global distances | Mettre à jour les distances globales
+            distanceWhisper = whisperValue;
+            distanceNormal = normalValue;
+            distanceShout = shoutValue;
 
-            // Success message | Message de succès
-            if (!wasAlreadySaved) {
-                showStatusMessage(L"\u2705 Configuration saved successfully!", FALSE);
+            // Save everything using saveVoiceSettings() | Tout sauvegarder avec saveVoiceSettings()
+            saveVoiceSettings();
+
+            // Restore voice mode | Restaurer le mode vocal
+            if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+                fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+                localVoiceData.voiceDistance = distanceWhisper;
+            }
+            else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+                localVoiceData.voiceDistance = distanceShout;
             }
             else {
-                showStatusMessage(L"\u2699\uFE0F Configuration updated successfully!", FALSE);
+                localVoiceData.voiceDistance = distanceNormal;
+            }
+
+            // Apply changes | Appliquer les changements
+            applyDistanceToAllPlayers();
+
+            showStatusMessage(L"Advanced options saved successfully!", FALSE);
+
+            if (enableLogConfig) {
+                char logMsg[256];
+                snprintf(logMsg, sizeof(logMsg),
+                    "Advanced options saved: Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
+                    distanceWhisper, distanceNormal, distanceShout,
+                    enableDistanceMuting ? "true" : "false",
+                    enableAutomaticChannelChange ? "true" : "false",
+                    enableVoiceToggle ? "true" : "false");
+                mumbleAPI.log(ownID, logMsg);
             }
             break;
         }
 
         case 2: DestroyWindow(hwnd); break;
 
-            // Handle distance field changes | Gestion des changements dans les champs de distance
+            // CORRECTION CRITIQUE: Gérer les boutons LOAD et RENAME **EN DEHORS** de EN_CHANGE
         default:
-            if (HIWORD(wParam) == EN_CHANGE) {
+            // Handle preset load buttons | Gérer boutons load
+            if (LOWORD(wParam) >= 900 && LOWORD(wParam) < 900 + MAX_VOICE_PRESETS) {
+                int presetIndex = LOWORD(wParam) - 900;
+                loadVoicePreset(presetIndex);
+                break;
+            }
+            // Handle preset rename buttons | Gérer boutons rename
+            else if (LOWORD(wParam) >= 950 && LOWORD(wParam) < 950 + MAX_VOICE_PRESETS) {
+                int presetIndex = LOWORD(wParam) - 950;
+                renamePresetIndex = presetIndex;
+
+                if (!hPresetRenameDialog || !IsWindow(hPresetRenameDialog)) {
+                    const wchar_t RENAME_DIALOG_CLASS[] = L"PresetRenameDialogClass";
+                    WNDCLASSW wc = { 0 };
+                    wc.lpfnWndProc = PresetRenameDialogProc;
+                    wc.hInstance = GetModuleHandleW(NULL);
+                    wc.lpszClassName = RENAME_DIALOG_CLASS;
+                    wc.hbrBackground = CreateSolidBrush(RGB(248, 249, 250));
+                    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+
+                    UnregisterClassW(RENAME_DIALOG_CLASS, wc.hInstance);
+                    RegisterClassW(&wc);
+
+                    // ✅ CORRECTION : Centrer au-dessus de l'interface principale
+                    int dialogWidth = 300;
+                    int dialogHeight = 240;
+                    int dialogX, dialogY;
+
+                    if (hwnd && IsWindow(hwnd)) {
+                        // Get parent window position and size | Obtenir position et taille de la fenêtre parente
+                        RECT parentRect;
+                        GetWindowRect(hwnd, &parentRect);
+
+                        int parentWidth = parentRect.right - parentRect.left;
+                        int parentHeight = parentRect.bottom - parentRect.top;
+                        int parentX = parentRect.left;
+                        int parentY = parentRect.top;
+                        dialogX = parentX + (parentWidth - dialogWidth) / 2;
+                        dialogY = parentY + (parentHeight - dialogHeight) / 2;
+
+                        if (enableLogGeneral) {
+                            char logMsg[256];
+                            snprintf(logMsg, sizeof(logMsg),
+                                "Rename dialog: Parent at (%d,%d), Dialog at (%d,%d)",
+                                parentX, parentY, dialogX, dialogY);
+                            mumbleAPI.log(ownID, logMsg);
+                        }
+                    }
+                    else {
+                        // Fallback to screen center if parent not available | Centrer sur l'écran si parent indisponible
+                        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+                        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+                        dialogX = (screenWidth - dialogWidth) / 2;
+                        dialogY = (screenHeight - dialogHeight) / 2;
+                    }
+
+                    hPresetRenameDialog = CreateWindowExW(
+                        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                        RENAME_DIALOG_CLASS,
+                        L"Rename Preset",
+                        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+                        dialogX, dialogY, dialogWidth, dialogHeight,
+                        hwnd, NULL, wc.hInstance, NULL);
+
+                    if (hPresetRenameDialog) {
+                        SetLayeredWindowAttributes(hPresetRenameDialog, 0, 250, LWA_ALPHA);
+                        ShowWindow(hPresetRenameDialog, SW_SHOW);
+                        UpdateWindow(hPresetRenameDialog);
+                    }
+                }
+                break;
+            }
+            // Handle distance field changes | Gestion des changements dans les champs de distance
+            else if (HIWORD(wParam) == EN_CHANGE) {
                 HWND hEditControl = (HWND)lParam;
                 if (hEditControl == hDistanceWhisperEdit) {
                     handleDistanceEditChange(1);
@@ -4082,11 +6106,445 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         break;
 
+    case WM_DRAWITEM: {
+        LPDRAWITEMSTRUCT lpDIS = (LPDRAWITEMSTRUCT)lParam;
+        int ctrlId = lpDIS->CtlID;
+
+        if (ctrlId >= 2001 && ctrlId <= 2005) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            // Load bitmap resource | Charger la ressource bitmap
+            HMODULE hModule = NULL;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCWSTR)ConfigDialogProc, &hModule);
+
+            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Key_Box_01),
+                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+            if (hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+                int width = rect.right - rect.left;
+                int height = rect.bottom - rect.top;
+
+                StretchBlt(hdc, 0, 0, width, height, hdcMem, 0, 0, width, height, SRCCOPY);
+
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
+                DeleteObject(hBitmap);
+            }
+
+            // Draw text with Patch Configuration style | Dessiner le texte avec le style de Patch Configuration
+            HWND hCtrl = lpDIS->hwndItem;
+            wchar_t text[256] = L"";
+            GetWindowTextW(hCtrl, text, 256);
+
+            if (wcslen(text) > 0) {
+                HFONT hTextFont = NULL;
+                HFONT hOldFont = NULL;
+                if (hFont) {
+                    hTextFont = hFont;
+                    hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                }
+                else {
+                    hTextFont = CreateFontW(
+                        18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                    hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                }
+
+                SetBkMode(hdc, TRANSPARENT);
+
+                // Shadow text | Texte ombre
+                SetTextColor(hdc, RGB(0, 0, 0));
+                RECT shadowRect = rect;
+                OffsetRect(&shadowRect, 1, 1);
+                DrawTextW(hdc, text, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                // Main text | Texte principal
+                SetTextColor(hdc, RGB(240, 240, 240));
+                DrawTextW(hdc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                SelectObject(hdc, hOldFont);
+                if (!hFontBold && hTextFont) {
+                    DeleteObject(hTextFont);
+                }
+            }
+
+            return TRUE;
+        }
+
+        // Draw Rename buttons with Rename Box image | Dessiner les boutons Rename avec l'image Rename Box
+        if (ctrlId >= 950 && ctrlId < 950 + MAX_VOICE_PRESETS) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            // Load bitmap resource | Charger la ressource bitmap
+            HMODULE hModule = NULL;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCWSTR)ConfigDialogProc, &hModule);
+
+            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Rename_Box_01),
+                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+            if (hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+                BITMAP bm;
+                GetObject(hBitmap, sizeof(BITMAP), &bm);
+
+                // Draw bitmap at real size (no stretch) | Dessiner le bitmap à taille réelle (pas de stretch)
+                BitBlt(hdc,
+                    rect.left,
+                    rect.top,
+                    bm.bmWidth,
+                    bm.bmHeight,
+                    hdcMem,
+                    0, 0,
+                    SRCCOPY);
+
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
+                DeleteObject(hBitmap);
+
+                // Draw text centered on image | Dessiner le texte centré sur l'image
+                wchar_t text[32] = L"Rename";
+                if (wcslen(text) > 0) {
+                    HFONT hTextFont = hFont ? hFont : CreateFontW(
+                        16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                    HFONT hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+
+                    RECT textRect;
+                    textRect.left = rect.left;
+                    textRect.top = rect.top;
+                    textRect.right = rect.left + bm.bmWidth;
+                    textRect.bottom = rect.top + bm.bmHeight;
+
+                    SetBkMode(hdc, TRANSPARENT);
+
+                    // Shadow text | Texte ombre
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    RECT shadowRect = textRect;
+                    OffsetRect(&shadowRect, 1, 1);
+                    DrawTextW(hdc, text, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                    // Main text | Texte principal
+                    SetTextColor(hdc, RGB(240, 240, 240));
+                    DrawTextW(hdc, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                    SelectObject(hdc, hOldFont);
+                    if (!hFont) DeleteObject(hTextFont);
+                }
+            }
+
+            return TRUE;
+        }
+
+        // Draw Load buttons with Load Box image | Dessiner les boutons Load avec l'image Load Box
+        if (ctrlId >= 900 && ctrlId < 900 + MAX_VOICE_PRESETS) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            // Load bitmap resource | Charger la ressource bitmap
+            HMODULE hModule = NULL;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCWSTR)ConfigDialogProc, &hModule);
+
+            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Load_Box_01),
+                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+            if (hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+                BITMAP bm;
+                GetObject(hBitmap, sizeof(BITMAP), &bm);
+
+                // Draw bitmap at real size (no stretch) | Dessiner le bitmap à taille réelle (pas de stretch)
+                BitBlt(hdc,
+                    rect.left,
+                    rect.top,
+                    bm.bmWidth,
+                    bm.bmHeight,
+                    hdcMem,
+                    0, 0,
+                    SRCCOPY);
+
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
+                DeleteObject(hBitmap);
+
+                // Draw text centered on image | Dessiner le texte centré sur l'image
+                wchar_t text[32] = L"Load";
+                if (wcslen(text) > 0) {
+                    HFONT hTextFont = hFont ? hFont : CreateFontW(
+                        16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                    HFONT hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+
+                    RECT textRect;
+                    textRect.left = rect.left;
+                    textRect.top = rect.top;
+                    textRect.right = rect.left + bm.bmWidth;
+                    textRect.bottom = rect.top + bm.bmHeight;
+
+                    SetBkMode(hdc, TRANSPARENT);
+
+                    // Shadow text | Texte ombre
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    RECT shadowRect = textRect;
+                    OffsetRect(&shadowRect, 1, 1);
+                    DrawTextW(hdc, text, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                    // Main text | Texte principal
+                    SetTextColor(hdc, RGB(240, 240, 240));
+                    DrawTextW(hdc, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                    SelectObject(hdc, hOldFont);
+                    if (!hFont) DeleteObject(hTextFont);
+                }
+            }
+
+            return TRUE;
+        }
+
+        // Draw Set Key buttons with Patch Configuration style | Dessiner les boutons Set Key avec le style de Patch Configuration
+        if (ctrlId == 101 || ctrlId == 102 || ctrlId == 103 || ctrlId == 104 || ctrlId == 106) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            // Load bitmap resource | Charger la ressource bitmap
+            HMODULE hModule = NULL;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCWSTR)ConfigDialogProc, &hModule);
+
+            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Key_Box_01),
+                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+            if (hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+                BITMAP bm;
+                GetObject(hBitmap, sizeof(BITMAP), &bm);
+
+                // Draw bitmap at real size (no stretch) | Dessiner le bitmap à taille réelle (pas de stretch)
+                BitBlt(hdc,
+                    rect.left,
+                    rect.top,
+                    bm.bmWidth,
+                    bm.bmHeight,
+                    hdcMem,
+                    0, 0,
+                    SRCCOPY);
+
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
+                DeleteObject(hBitmap);
+
+                // Draw text with Patch Configuration style | Dessiner le texte avec le style de Patch Configuration
+                wchar_t text[32] = L"";
+                GetWindowTextW(lpDIS->hwndItem, text, 32);
+
+                if (wcslen(text) > 0) {
+                    HFONT hTextFont = NULL;
+                    HFONT hOldFont = NULL;
+                    if (hFont) {
+                        hTextFont = hFont;
+                        hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                    }
+                    else {
+                        hTextFont = CreateFontW(
+                            16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                        hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                    }
+
+                    RECT textRect;
+                    textRect.left = rect.left;
+                    textRect.top = rect.top;
+                    textRect.right = rect.left + bm.bmWidth;
+                    textRect.bottom = rect.top + bm.bmHeight;
+
+                    SetBkMode(hdc, TRANSPARENT);
+
+                    // Shadow text | Texte ombre
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    RECT shadowRect = textRect;
+                    OffsetRect(&shadowRect, 1, 1);
+                    DrawTextW(hdc, text, -1, &shadowRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                    // Main text | Texte principal
+                    SetTextColor(hdc, RGB(240, 240, 240));
+                    DrawTextW(hdc, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+                    SelectObject(hdc, hOldFont);
+                    if (!hFontBold && hTextFont) {
+                        DeleteObject(hTextFont);
+                    }
+                }
+            }
+
+            return TRUE;
+        }
+
+        // ✅ Dessiner l'image Path_Box AVEC TEXTE par-dessus
+        if (ctrlId == 1100) {
+            HDC hdc = lpDIS->hDC;
+            RECT rect = lpDIS->rcItem;
+
+            // Charger le bitmap
+            HMODULE hModule = NULL;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCWSTR)ConfigDialogProc, &hModule);
+
+            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Path_Box),
+                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+
+            int bmWidth = rect.right - rect.left;
+            int bmHeight = rect.bottom - rect.top;
+
+            if (hBitmap) {
+                HDC hdcMem = CreateCompatibleDC(hdc);
+                HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+
+                BITMAP bm;
+                GetObject(hBitmap, sizeof(BITMAP), &bm);
+
+                // utiliser les dimensions réelles du bitmap
+                bmWidth = bm.bmWidth;
+                bmHeight = bm.bmHeight;
+
+                BitBlt(hdc,
+                    rect.left, rect.top,
+                    bm.bmWidth, bm.bmHeight,
+                    hdcMem,
+                    0, 0,
+                    SRCCOPY);
+
+                SelectObject(hdcMem, hOldBitmap);
+                DeleteDC(hdcMem);
+                DeleteObject(hBitmap);
+            }
+
+            if (wcslen(displayedPathText) > 0) {
+                // Sélection de la police (préférer hPathFont)
+                HFONT hTextFont = NULL;
+                HFONT hOldFont = NULL;
+                BOOL createdLocalFont = FALSE;
+                if (hPathFont) {
+                    hTextFont = hPathFont;
+                    hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                }
+                else if (hFont) {
+                    hTextFont = hFont;
+                    hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                }
+                else {
+                    hTextFont = CreateFontW(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                    hOldFont = (HFONT)SelectObject(hdc, hTextFont);
+                    createdLocalFont = TRUE;
+                }
+
+                SetBkMode(hdc, TRANSPARENT);
+
+                // rectangle image exact
+                RECT imageRect;
+                imageRect.left = rect.left;
+                imageRect.top = rect.top;
+                imageRect.right = rect.left + bmWidth;
+                imageRect.bottom = rect.top + bmHeight;
+
+                const int horizMargin = 8;
+                int availWidth = bmWidth - horizMargin * 2;
+                if (availWidth < 1) availWidth = 1;
+
+                // mesurer le texte actuel avec la police sélectionnée
+                SIZE textSize = { 0, 0 };
+                GetTextExtentPoint32W(hdc, displayedPathText, (int)wcslen(displayedPathText), &textSize);
+
+                if (textSize.cx <= availWidth) {
+                    // texte tient → on calcule une position exacte (pixel-perfect)
+                    int textX = imageRect.left + (bmWidth - textSize.cx) / 2;
+                    int textY = imageRect.top + (bmHeight - textSize.cy) / 2;
+
+                    // Ombre
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    TextOutW(hdc, textX + 1, textY + 1, displayedPathText, (int)wcslen(displayedPathText));
+
+                    // Texte principal (blanc)
+                    SetTextColor(hdc, RGB(255, 255, 255));
+                    TextOutW(hdc, textX, textY, displayedPathText, (int)wcslen(displayedPathText));
+                }
+                else {
+                    // trop long → utiliser DrawText avec DT_END_ELLIPSIS et centrer verticalement
+                    RECT dtRect = imageRect;
+                    dtRect.left += horizMargin;
+                    dtRect.right -= horizMargin;
+
+                    // Calcule la hauteur du texte (DT_CALCRECT) pour centrer verticalement
+                    RECT calcRect = dtRect;
+                    DrawTextW(hdc, displayedPathText, -1, &calcRect, DT_SINGLELINE | DT_CALCRECT | DT_END_ELLIPSIS);
+
+                    int textH = calcRect.bottom - calcRect.top;
+                    if (textH <= 0) textH = (bmHeight / 2);
+
+                    // Positionner verticalement au centre
+                    int top = imageRect.top + (bmHeight - textH) / 2;
+                    dtRect.top = top;
+                    dtRect.bottom = top + textH;
+
+                    // Ombre
+                    RECT shadowRect = dtRect;
+                    OffsetRect(&shadowRect, 1, 1);
+                    SetTextColor(hdc, RGB(0, 0, 0));
+                    DrawTextW(hdc, displayedPathText, -1, &shadowRect,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+                    // Texte principal (blanc)
+                    SetTextColor(hdc, RGB(255, 255, 255));
+                    DrawTextW(hdc, displayedPathText, -1, &dtRect,
+                        DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+                }
+
+                // restaurer police et nettoyer si nécessaire
+                SelectObject(hdc, hOldFont);
+                if (createdLocalFont && hTextFont) {
+                    DeleteObject(hTextFont);
+                }
+            }
+
+            return TRUE;
+        }
+
+        // Dessiner les boutons (code existant)
+        if (lpDIS->CtlType == ODT_BUTTON) {
+            int ctrlId = lpDIS->CtlID;
+            if (ctrlId != 201 && ctrlId != 203 && ctrlId != 204) {
+                DrawButtonWithBitmap(lpDIS);
+                return TRUE;
+            }
+        }
+        break;
+    }
+
     case WM_DESTROY:
         if (hFont) DeleteObject(hFont);
         if (hFontBold) DeleteObject(hFontBold);
         if (hFontLarge) DeleteObject(hFontLarge);
         if (hFontEmoji) DeleteObject(hFontEmoji);
+        if (hPathFont) { DeleteObject(hPathFont); hPathFont = NULL; }
+
         PostQuitMessage(0);
         break;
 
@@ -4127,11 +6585,21 @@ static int showConfigInterface() {
     }
 
     const wchar_t CONFIG_CLASS_NAME[] = L"ModernConfigClass";
+
+    // Charger l'image de fond depuis la ressource AVANT d'enregistrer la classe
+    if (!hBackgroundBitmap) {
+        hBackgroundBitmap = LoadBackgroundFromResource(IDB_BACKGROUND);
+        if (hBackgroundBitmap && enableLogGeneral) {
+            mumbleAPI.log(ownID, "Background bitmap loaded for class background");
+        }
+    }
+
+    // ✅ IMPORTANT : Utiliser NULL_BRUSH pour empêcher Windows de peindre le fond
     WNDCLASSW wc = { 0 };
     wc.lpfnWndProc = ConfigDialogProc;
     wc.hInstance = GetModuleHandleW(NULL);
     wc.lpszClassName = CONFIG_CLASS_NAME;
-    wc.hbrBackground = CreateSolidBrush(RGB(248, 249, 250));
+    wc.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
 
@@ -4197,7 +6665,12 @@ static int showConfigInterface() {
         mumbleAPI.log(ownID, msg);
     }
 
-    SetLayeredWindowAttributes(hConfigDialog, 0, 250, LWA_ALPHA);
+    SetLayeredWindowAttributes(hConfigDialog, 0, 255, LWA_ALPHA);
+
+    InvalidateRect(hConfigDialog, NULL, TRUE);
+    RedrawWindow(hConfigDialog, NULL, NULL,
+        RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+    UpdateWindow(hConfigDialog);
 
     // Force window to foreground without affecting mouse | Forcer la fenêtre au premier plan sans affecter la souris
     forceWindowToForegroundNoMouse(hConfigDialog);
@@ -4688,6 +7161,17 @@ static void handleDistanceEditChange(int editId) {
 static void updateDynamicInterface() {
     if (isUpdatingInterface) return;
     if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
+
+    if (currentCategory != 2) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "updateDynamicInterface: Not in category 2 - skipping update");
+        }
+        return;
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "DEBUG: updateDynamicInterface() CALLED!");
+    }
 
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "DEBUG: updateDynamicInterface() CALLED!");
@@ -5355,6 +7839,9 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
 
     // Load voice distances from config | Charger les distances de voix depuis la configuration
     loadVoiceDistancesFromConfig();
+    // Initialize voice presets | Initialiser les presets vocaux
+    initializeVoicePresets();
+    loadPresetsFromConfigFile();
 
     // Read and activate configuration | Lecture et activation automatique de la configuration
     readConfigurationSettings();
@@ -5399,6 +7886,7 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
 
     // Read saved path and convert to modFilePath | Lire le chemin sauvegardé et convertir en modFilePath
     wchar_t savedPath[MAX_PATH] = L"";
+    wchar_t displayedPathText[MAX_PATH] = L"";
     wchar_t configFile[MAX_PATH];
     swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
     FILE* file = _wfopen(configFile, L"r");
@@ -5469,7 +7957,7 @@ struct MumbleStringWrapper mumble_getName() {
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 };
     version.major = 5;
-    version.minor = 1;
+    version.minor = 3;
     version.patch = 3;
 
     return version;
@@ -5749,18 +8237,43 @@ void mumble_shutdown() {
     overlayThreadRunning = FALSE;
     removeKeyMonitoring();
 
-    // Voice system cleanup | Nettoyage du système de voix
+    // Voice system cleanup
     remotePlayerCount = 0;
     memset(remotePlayersData, 0, sizeof(CompletePositionalData));
     memset(remotePlayersData, 0, sizeof(remotePlayersData));
     cleanupPlayerMuteStates();
 
-    // Free cached hub description if any | Libérer la description mise en cache
     if (lastHubDescriptionCache) {
         free(lastHubDescriptionCache);
         lastHubDescriptionCache = NULL;
         if (enableLogGeneral) mumbleAPI.log(ownID, "Freed cached hub description");
     }
+
+    if (hBackgroundBitmap) {
+        DeleteObject(hBackgroundBitmap);
+        hBackgroundBitmap = NULL;
+    }
+
+    // Libérer le background avancé si présent
+    if (hBackgroundAdvancedBitmap) {
+        DeleteObject(hBackgroundAdvancedBitmap);
+        hBackgroundAdvancedBitmap = NULL;
+    }
+
+    if (hBackgroundPresetsBitmap) {
+        DeleteObject(hBackgroundPresetsBitmap);
+        hBackgroundPresetsBitmap = NULL;
+    }
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, "Background bitmaps freed");
+    }
+
+    if (hPathBoxBitmap) {
+        DeleteObject(hPathBoxBitmap);
+        hPathBoxBitmap = NULL;
+    }
+
 }
 
 // Release Mumble resource | Libérer une ressource Mumble

@@ -7957,8 +7957,8 @@ struct MumbleStringWrapper mumble_getName() {
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 };
     version.major = 5;
-    version.minor = 4;
-    version.patch = 3;
+    version.minor = 3;
+    version.patch = 4;
 
     return version;
 }

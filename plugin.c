@@ -7957,7 +7957,7 @@ struct MumbleStringWrapper mumble_getName() {
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 };
     version.major = 5;
-    version.minor = 3;
+    version.minor = 4;
     version.patch = 3;
 
     return version;
@@ -7977,7 +7977,7 @@ struct MumbleStringWrapper mumble_getAuthor() {
 
 // Get plugin description | Obtenir la description du plugin
 struct MumbleStringWrapper mumble_getDescription() {
-    static const char* description = u8"Creator's Discord : Dino_Rex Discord: https://discord.gg/tFBbQzmDaZ";
+    static const char* description = u8"By installing, you agree to the license terms available at: https://github.com/DinoRex22/Conan-Exiles-Mumble/blob/main/LICENSE | Discord: https://discord.gg/tFBbQzmDaZ";
 
     struct MumbleStringWrapper wrapper = { 0 };
     wrapper.data = description;

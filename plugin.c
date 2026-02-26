@@ -68,6 +68,8 @@ static BOOL backgroundDrawn = FALSE;
 // Plugin control variables | Variables de contrôle du plugin
 BOOL enableGetPlayerCoordinates = TRUE;
 BOOL TEMP = FALSE;
+BOOL enableAutomaticPatchFind = FALSE;
+HWND hAutomaticPatchFindCheck = NULL;
 
 // F9 coordinate broadcast variables | Variables pour la diffusion des coordonnées en F9
 BOOL f9CoordinateBroadcastActive = FALSE;
@@ -334,6 +336,11 @@ size_t lowPassStateCount = 0;
 
 // Air diffusion option | Option pour activer la diffusion d'air
 BOOL enableAirDiffusion = TRUE;
+
+// Forward declarations | Déclarations forward
+static float getVoiceDistanceForMode(uint8_t voiceMode);
+static BOOL findConanExilesAutomatic(wchar_t* outPath, size_t pathSize);
+static BOOL parseSteamLibraryFolders(const wchar_t* vdfPath, wchar_t* outConanPath, size_t pathSize);
 
 // ============================================================================
 // MODULE 1 : UTILITAIRES DE BASE (appelés par TOUT le monde)
@@ -611,6 +618,7 @@ static void readConfigurationSettings() {
     BOOL foundDistanceWhisper = FALSE;
     BOOL foundDistanceNormal = FALSE;
     BOOL foundDistanceShout = FALSE;
+    BOOL foundAutomaticPatchFind = FALSE;
 
     wchar_t savedPathValue[MAX_PATH] = L"";
 
@@ -680,16 +688,22 @@ static void readConfigurationSettings() {
                 else if (wcsncmp(key, L"EnableVoiceToggle", 17) == 0) {
                     enableVoiceToggle = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
                 }
+                else if (wcsncmp(key, L"AutomaticPatchFind", 18) == 0) {
+                    enableAutomaticPatchFind = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
+                    foundAutomaticPatchFind = TRUE;
+                }
 
             }
             fclose(f);
         }
     }
     // If file doesn't exist or critical settings are missing, create or update it | Si le fichier n'existe pas ou si des paramètres critiques manquent, le créer ou le mettre à jour
-    if (!fileExists || !foundSavedPath || !foundEnableAutomaticChannelChange) {
+    if (!fileExists || !foundSavedPath || !foundEnableAutomaticChannelChange || !foundAutomaticPatchFind) {
         FILE* f = _wfopen(configFile, L"w");
         if (f) {
             fwprintf(f, L"SavedPath=%s\n", foundSavedPath ? savedPathValue : L"");
+            fwprintf(f, L"AutomaticSavedPath=\n");
+            fwprintf(f, L"AutomaticPatchFind=%s\n", TRUE ? L"true" : L"false");
             fwprintf(f, L"AutomaticSavedPath=\n");
             fwprintf(f, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
             fwprintf(f, L"WhisperKey=%d\n", whisperKey);
@@ -697,8 +711,6 @@ static void readConfigurationSettings() {
             fwprintf(f, L"ShoutKey=%d\n", shoutKey);
             fwprintf(f, L"ConfigUIKey=%d\n", configUIKey);
             fwprintf(f, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-            // CORRECTION: Écrire les distances SEULEMENT si elles ont été trouvées dans le fichier
-            // Sinon, utiliser les valeurs par défaut
             fwprintf(f, L"DistanceWhisper=%.1f\n", foundDistanceWhisper ? distanceWhisper : 2.0f);
             fwprintf(f, L"DistanceNormal=%.1f\n", foundDistanceNormal ? distanceNormal : 10.0f);
             fwprintf(f, L"DistanceShout=%.1f\n", foundDistanceShout ? distanceShout : 15.0f);
@@ -706,13 +718,15 @@ static void readConfigurationSettings() {
             fwprintf(f, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
             fclose(f);
         }
+        // ✅ CORRECTION CRITIQUE : Définir enableAutomaticPatchFind à TRUE lors de la création initiale
+        enableAutomaticPatchFind = TRUE;
     }
 
     if (enableLogConfig) {
         char logMsg[256];
         snprintf(logMsg, sizeof(logMsg),
-            "Configuration loaded - Whisper: %.1fm, Normal: %.1fm, Shout: %.1fm",
-            distanceWhisper, distanceNormal, distanceShout);
+            "Configuration loaded - Whisper: %.1fm, Normal: %.1fm, Shout: %.1fm, AutomaticPatchFind: %s",
+            distanceWhisper, distanceNormal, distanceShout, enableAutomaticPatchFind ? "TRUE" : "FALSE");
         mumbleAPI.log(ownID, logMsg);
     }
 }
@@ -1246,20 +1260,69 @@ static void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* dis
     distanceNormal = normalValue;
     distanceShout = shoutValue;
 
-    // Écrire directement dans le fichier
+    // Read existing SavedPath and AutomaticSavedPath before overwriting | Lire le SavedPath et AutomaticSavedPath existants avant écrasement
+    wchar_t existingSavedPath[MAX_PATH] = L"";
+    wchar_t existingAutoPath[MAX_PATH] = L"";
+
+    FILE* fRead = _wfopen(configFile, L"r");
+    if (fRead) {
+        wchar_t line[512];
+        while (fgetws(line, 512, fRead)) {
+            if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+                wchar_t* pathStart = line + 10;
+                wchar_t* nl = wcschr(pathStart, L'\n');
+                if (nl) *nl = L'\0';
+                wchar_t* cr = wcschr(pathStart, L'\r');
+                if (cr) *cr = L'\0';
+                wcscpy_s(existingSavedPath, MAX_PATH, pathStart);
+            }
+            else if (wcsncmp(line, L"AutomaticSavedPath=", 19) == 0) {
+                wchar_t* pathStart = line + 19;
+                wchar_t* nl = wcschr(pathStart, L'\n');
+                if (nl) *nl = L'\0';
+                wchar_t* cr = wcschr(pathStart, L'\r');
+                if (cr) *cr = L'\0';
+                wcscpy_s(existingAutoPath, MAX_PATH, pathStart);
+            }
+        }
+        fclose(fRead);
+    }
+
+    // Write configuration file | Écrire le fichier de configuration
     FILE* file = _wfopen(configFile, L"w");
     if (!file) {
         return;
     }
 
-    fwprintf(file, L"SavedPath=%s\n", savedPathFull);
+    // Logic for SavedPath | Logique pour SavedPath
+    if (enableAutomaticPatchFind) {
+        // Automatic mode: preserve manual path in SavedPath, write to AutomaticSavedPath | Mode automatique : préserver le chemin manuel dans SavedPath, écrire dans AutomaticSavedPath
+        if (wcslen(existingSavedPath) > 0) {
+            fwprintf(file, L"SavedPath=%s\n", existingSavedPath);
+        }
+        else {
+            fwprintf(file, L"SavedPath=\n");
+        }
+        fwprintf(file, L"AutomaticSavedPath=%s\n", savedPathFull);
+    }
+    else {
+        // Manual mode: write to SavedPath, preserve automatic path in AutomaticSavedPath | Mode manuel : écrire dans SavedPath, préserver le chemin automatique dans AutomaticSavedPath
+        fwprintf(file, L"SavedPath=%s\n", savedPathFull);
+        if (wcslen(existingAutoPath) > 0) {
+            fwprintf(file, L"AutomaticSavedPath=%s\n", existingAutoPath);
+        }
+        else {
+            fwprintf(file, L"AutomaticSavedPath=\n");
+        }
+    }
+
+    fwprintf(file, L"AutomaticPatchFind=%s\n", enableAutomaticPatchFind ? L"true" : L"false");
     fwprintf(file, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
     fwprintf(file, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
     fwprintf(file, L"WhisperKey=%d\n", whisperKey);
     fwprintf(file, L"NormalKey=%d\n", normalKey);
     fwprintf(file, L"ShoutKey=%d\n", shoutKey);
     fwprintf(file, L"ConfigUIKey=%d\n", configUIKey);
-    // CORRECTION: Écrire les valeurs EXACTES entrées par l'utilisateur
     fwprintf(file, L"DistanceWhisper=%.1f\n", distanceWhisper);
     fwprintf(file, L"DistanceNormal=%.1f\n", distanceNormal);
     fwprintf(file, L"DistanceShout=%.1f\n", distanceShout);
@@ -4475,6 +4538,10 @@ static void ShowCategoryControls(int category) {
         if (hSavedPathEdit) ShowWindow(hSavedPathEdit, SW_SHOW);
         if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_SHOW);
 
+        if (hAutomaticPatchFindCheck) ShowWindow(hAutomaticPatchFindCheck, SW_SHOW);
+        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, 2004);
+        if (hAutomaticPatchFindLabel) ShowWindow(hAutomaticPatchFindLabel, SW_SHOW);
+
         HWND hideControls[] = {
             hPluginLabel, hKeyLabel, hWhisperLabel, hNormalLabel, hShoutLabel,
             hConfigLabel, hConfigExplain, hDistanceLabel, hDistanceWhisperLabel,
@@ -4516,6 +4583,11 @@ static void ShowCategoryControls(int category) {
         if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_HIDE);
         // Hide patch controls | Masquer contrôles patch
         if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_HIDE);
+
+        // ✅ MASQUER la checkbox et le label Automatic Patch Find
+        if (hAutomaticPatchFindCheck) ShowWindow(hAutomaticPatchFindCheck, SW_HIDE);
+        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, 2004);
+        if (hAutomaticPatchFindLabel) ShowWindow(hAutomaticPatchFindLabel, SW_HIDE);
 
         // Hide Automatic Patch Find controls | Masquer les contrôles Automatic Patch Find
         HWND hAutomaticPatchFindLabelHide3 = GetDlgItem(hConfigDialog, 2000);
@@ -4598,6 +4670,9 @@ static void ShowCategoryControls(int category) {
     else if (category == 3) { // ========== VOICE RANGE PRESETS ==========
         // Hide patch controls | Masquer contrôles patch
         if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_HIDE);
+        if (hAutomaticPatchFindCheck) ShowWindow(hAutomaticPatchFindCheck, SW_HIDE);
+        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, 2004);
+        if (hAutomaticPatchFindLabel) ShowWindow(hAutomaticPatchFindLabel, SW_HIDE);
         if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
         if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
         if (hExplanation3) ShowWindow(hExplanation3, SW_HIDE);
@@ -5918,6 +5993,272 @@ static LRESULT CALLBACK CheckboxLabelProc(HWND hwnd, UINT msg, WPARAM wParam, LP
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+// Find Steam installation path and parse libraries | Trouver le chemin d'installation Steam et parser les bibliothèques
+static BOOL findConanExilesAutomatic(wchar_t* outPath, size_t pathSize) {
+    if (!outPath || pathSize == 0) return FALSE;
+
+    // Debug: Log the registry key access | Déboguer: Logger l'accès aux clés du registre
+    if (enableLogConfig) {
+        mumbleAPI.log(ownID, "DEBUG: Attempting to read Steam registry keys...");
+    }
+
+    HKEY hKey = NULL;
+    // Try 64-bit registry first | Essayer le registre 64-bit d'abord
+    LONG result = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\WOW6432Node\\Valve\\Steam",
+        0, KEY_READ, &hKey);
+
+    if (result != ERROR_SUCCESS) {
+        // Try 32-bit registry | Essayer le registre 32-bit
+        result = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+            L"SOFTWARE\\Valve\\Steam",
+            0, KEY_READ, &hKey);
+    }
+
+    if (result != ERROR_SUCCESS) {
+        if (enableLogConfig) {
+            char errorMsg[256];
+            snprintf(errorMsg, sizeof(errorMsg),
+                "Registry: Steam installation key not found - Error code: %ld", result);
+            mumbleAPI.log(ownID, errorMsg);
+        }
+        return FALSE;
+    }
+
+    wchar_t installPath[MAX_PATH] = L"";
+    DWORD dataSize = sizeof(installPath);
+    result = RegQueryValueExW(hKey, L"InstallPath", NULL, NULL,
+        (LPBYTE)installPath, &dataSize);
+
+    RegCloseKey(hKey);
+
+    if (result != ERROR_SUCCESS || wcslen(installPath) == 0) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "Registry: Steam InstallPath value not found");
+        }
+        return FALSE;
+    }
+
+    // Build path to libraryfolders.vdf | Construire le chemin vers libraryfolders.vdf
+    wchar_t vdfPath[MAX_PATH];
+    swprintf(vdfPath, MAX_PATH, L"%s\\steamapps\\libraryfolders.vdf", installPath);
+
+    // Debug: Log VDF path | Déboguer: Logger le chemin du fichier VDF
+    if (enableLogConfig) {
+        char vdfPathUtf8[MAX_PATH];
+        size_t converted = 0;
+        wcstombs_s(&converted, vdfPathUtf8, MAX_PATH, vdfPath, _TRUNCATE);
+        char debugMsg[512];
+        snprintf(debugMsg, sizeof(debugMsg),
+            "DEBUG: Looking for VDF file at: %s", vdfPathUtf8);
+        mumbleAPI.log(ownID, debugMsg);
+    }
+
+    // Debug: Check if VDF file exists | Déboguer: Vérifier si le fichier VDF existe
+    DWORD vdfAttribs = GetFileAttributesW(vdfPath);
+    if (vdfAttribs == INVALID_FILE_ATTRIBUTES) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "DEBUG: VDF file does NOT exist at this location");
+        }
+        return FALSE;
+    }
+    else {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "DEBUG: VDF file found - proceeding to parse");
+        }
+    }
+
+    // ✅ CORRECTION : Parse VDF et retourne le chemin COMPLET incluant \ConanSandbox\Saved
+    return parseSteamLibraryFolders(vdfPath, outPath, pathSize);
+}
+
+// Parse Steam libraryfolders.vdf file | Parser le fichier libraryfolders.vdf de Steam
+static BOOL parseSteamLibraryFolders(const wchar_t* vdfPath, wchar_t* outConanPath, size_t pathSize) {
+    if (!vdfPath || !outConanPath || pathSize == 0) return FALSE;
+
+    FILE* file = _wfopen(vdfPath, L"r, ccs=UTF-8");
+    if (!file) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "DEBUG: Failed to open libraryfolders.vdf");
+        }
+        return FALSE;
+    }
+
+    if (enableLogConfig) {
+        mumbleAPI.log(ownID, "DEBUG: Successfully opened libraryfolders.vdf - parsing...");
+    }
+
+    wchar_t line[1024];
+    wchar_t currentLibraryPath[MAX_PATH] = L"";
+    BOOL foundConanExiles = FALSE;
+    int lineNumber = 0;
+    int libraryDepth = 0; // ✅ Profondeur des accolades pour détecter les sections
+
+    while (fgetws(line, 1024, file) && !foundConanExiles) {
+        lineNumber++;
+        wchar_t* p = line;
+
+        // ✅ Nettoyer les espaces/tabs/retours à la ligne
+        while (*p == L' ' || *p == L'\t' || *p == L'\r' || *p == L'\n') p++;
+
+        // ✅ DÉTECTER LES ACCOLADES OUVRANTES/FERMANTES
+        if (wcschr(p, L'{')) {
+            libraryDepth++;
+            if (enableLogConfig) {
+                char logMsg[256];
+                snprintf(logMsg, sizeof(logMsg), "DEBUG: Opening brace at line %d, depth=%d", lineNumber, libraryDepth);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        if (wcschr(p, L'}')) {
+            libraryDepth--;
+
+            // ✅ RÉINITIALISER LE CHEMIN QUAND ON SORT D'UNE BIBLIOTHÈQUE
+            if (libraryDepth == 1) {
+                if (enableLogConfig) {
+                    mumbleAPI.log(ownID, "DEBUG: Exiting library section - resetting path");
+                }
+                currentLibraryPath[0] = L'\0';
+            }
+        }
+
+        // ✅ CHERCHER "path" UNIQUEMENT SI DANS UNE BIBLIOTHÈQUE (depth >= 2)
+        if (libraryDepth >= 2 && wcsncmp(p, L"\"path\"", 6) == 0) {
+            if (enableLogConfig) {
+                char logMsg[256];
+                snprintf(logMsg, sizeof(logMsg), "DEBUG: Found 'path' line at line %d (depth=%d)", lineNumber, libraryDepth);
+                mumbleAPI.log(ownID, logMsg);
+            }
+
+            // ✅ MÉTHODE ROBUSTE : Chercher les guillemets correctement
+            wchar_t* firstQuote = wcschr(p, L'\"');       // Premier guillemet de "path"
+            if (!firstQuote) continue;
+
+            wchar_t* secondQuote = wcschr(firstQuote + 1, L'\"'); // Deuxième guillemet de path"
+            if (!secondQuote) continue;
+
+            // ✅ APRÈS "path", chercher le PROCHAIN guillemet ouvrant (après espaces/tabs)
+            wchar_t* searchPos = secondQuote + 1;
+            while (*searchPos && (*searchPos == L' ' || *searchPos == L'\t')) searchPos++;
+
+            wchar_t* thirdQuote = wcschr(searchPos, L'\"'); // Premier guillemet du chemin
+            if (!thirdQuote) continue;
+
+            wchar_t* fourthQuote = wcschr(thirdQuote + 1, L'\"'); // Deuxième guillemet du chemin
+            if (!fourthQuote) continue;
+
+            // ✅ Extraire le chemin entre thirdQuote et fourthQuote
+            wchar_t* pathStart = thirdQuote + 1;
+            size_t pathLen = fourthQuote - pathStart;
+
+            if (pathLen == 0 || pathLen >= MAX_PATH) continue;
+
+            wcsncpy_s(currentLibraryPath, MAX_PATH, pathStart, pathLen);
+            currentLibraryPath[pathLen] = L'\0';
+
+            // ✅ TRIM : Supprimer espaces/tabs au DÉBUT
+            wchar_t* trimStart = currentLibraryPath;
+            while (*trimStart == L' ' || *trimStart == L'\t') trimStart++;
+
+            // ✅ TRIM : Supprimer espaces/tabs à la FIN
+            wchar_t* trimEnd = currentLibraryPath + wcslen(currentLibraryPath) - 1;
+            while (trimEnd > trimStart && (*trimEnd == L' ' || *trimEnd == L'\t')) {
+                *trimEnd = L'\0';
+                trimEnd--;
+            }
+
+            // Si après trim on a une chaîne vide, ignorer
+            if (wcslen(trimStart) == 0) continue;
+
+            // Copier le chemin trimmé vers le début du buffer
+            if (trimStart != currentLibraryPath) {
+                wcscpy_s(currentLibraryPath, MAX_PATH, trimStart);
+            }
+
+            // ✅ NETTOYER LES DOUBLES BACKSLASHES (\\\\  →  \\)
+            wchar_t cleanPath[MAX_PATH] = L"";
+            size_t j = 0;
+            for (size_t i = 0; i < wcslen(currentLibraryPath) && j < MAX_PATH - 1; i++) {
+                cleanPath[j++] = currentLibraryPath[i];
+                if (currentLibraryPath[i] == L'\\' && currentLibraryPath[i + 1] == L'\\') {
+                    i++; // Sauter le second backslash
+                }
+            }
+            cleanPath[j] = L'\0';
+            wcscpy_s(currentLibraryPath, MAX_PATH, cleanPath);
+
+            if (enableLogConfig) {
+                char pathUtf8[MAX_PATH];
+                size_t converted = 0;
+                wcstombs_s(&converted, pathUtf8, MAX_PATH, currentLibraryPath, _TRUNCATE);
+                char logMsg[512];
+                snprintf(logMsg, sizeof(logMsg), "DEBUG: Extracted library path: '%s'", pathUtf8);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+
+        // ✅ CHERCHER "440900" (Conan Exiles) SI UN CHEMIN EST STOCKÉ
+        if (wcslen(currentLibraryPath) > 0 && wcsncmp(p, L"\"440900\"", 8) == 0) {
+            if (enableLogConfig) {
+                char logMsg[256];
+                snprintf(logMsg, sizeof(logMsg), "DEBUG: Found Conan Exiles (440900) at line %d", lineNumber);
+                mumbleAPI.log(ownID, logMsg);
+            }
+
+            // ✅ CONSTRUIRE LE CHEMIN COMPLET
+            swprintf(outConanPath, pathSize, L"%s\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved",
+                currentLibraryPath);
+
+            if (enableLogConfig) {
+                char pathUtf8[MAX_PATH];
+                size_t converted = 0;
+                wcstombs_s(&converted, pathUtf8, MAX_PATH, outConanPath, _TRUNCATE);
+                char logMsg[512];
+                snprintf(logMsg, sizeof(logMsg), "DEBUG: Testing path: %s", pathUtf8);
+                mumbleAPI.log(ownID, logMsg);
+            }
+
+            // ✅ VÉRIFIER QUE LE DOSSIER EXISTE
+            DWORD attribs = GetFileAttributesW(outConanPath);
+            if (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY)) {
+                foundConanExiles = TRUE;
+                if (enableLogConfig) {
+                    mumbleAPI.log(ownID, "DEBUG: Path VERIFIED - folder exists!");
+                }
+            }
+            else {
+                if (enableLogConfig) {
+                    char logMsg[256];
+                    snprintf(logMsg, sizeof(logMsg), "DEBUG: Path INVALID - GetFileAttributesW returned: %lu", attribs);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+        }
+    }
+
+    fclose(file);
+
+    if (foundConanExiles) {
+        if (enableLogConfig) {
+            char successMsg[512];
+            size_t converted = 0;
+            char pathUtf8[MAX_PATH];
+            wcstombs_s(&converted, pathUtf8, MAX_PATH, outConanPath, _TRUNCATE);
+            snprintf(successMsg, sizeof(successMsg),
+                "SUCCESS: Conan Exiles found at: %s", pathUtf8);
+            mumbleAPI.log(ownID, successMsg);
+        }
+        return TRUE;
+    }
+    else {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "DEBUG: Conan Exiles NOT FOUND in any library");
+        }
+        return FALSE;
+    }
+}
+
 // Read Steam ID from Windows Registry | Lire le Steam ID depuis le registre Windows
 static BOOL readSteamIDFromRegistry(uint64_t* outSteamID) {
     if (!outSteamID) return FALSE;
@@ -6280,6 +6621,38 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         int browseX = pathX + pathBoxWidth + browseGap;
         int browseY = pathY + ((pathBoxHeight - browseBtnHeight) / 2);
 
+        // Load checkmark icon from resources | Charger l'icône checkmark depuis les ressources
+        HMODULE hModuleCheckmark = NULL;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)ConfigDialogProc, &hModuleCheckmark);
+
+        HICON hCheckIcon = (HICON)LoadImageW(hModuleCheckmark, MAKEINTRESOURCEW(IDI_CHECKMARK),
+            IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+
+        // Automatic patch find checkbox | Checkbox pour la recherche automatique de patch
+        hAutomaticPatchFindCheck = CreateWindowW(L"BUTTON", L"",
+            WS_CHILD | BS_AUTOCHECKBOX,  // ✅ ENLEVER WS_VISIBLE
+            60, 220, 20, 20,
+            hwnd, (HMENU)200, GetModuleHandle(NULL), NULL);
+
+        // Set checkmark icon if loaded | Définir l'icône checkmark si chargée
+        if (hCheckIcon) {
+            SendMessage(hAutomaticPatchFindCheck, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hCheckIcon);
+        }
+
+        HWND hAutomaticPatchFindLabel = CreateWindowW(L"STATIC", L"Automatic Patch Find",
+            WS_CHILD | SS_LEFT | SS_NOTIFY | WS_DISABLED,  // ✅ ENLEVER WS_VISIBLE
+            80, 222, 400, 20,
+            hwnd, (HMENU)2004, NULL, NULL);
+        ApplyFontToControl(hAutomaticPatchFindLabel, hFont);
+
+        SetWindowSubclass(hAutomaticPatchFindLabel, CheckboxLabelProc, 200, (DWORD_PTR)hAutomaticPatchFindCheck);
+
+        // Set checkbox state from config | Définir l'état de la checkbox depuis la config
+        // Default to TRUE if not yet configured | Par défaut TRUE si non configuré
+        CheckDlgButton(hwnd, 200, enableAutomaticPatchFind ? BST_CHECKED : BST_UNCHECKED);
+        ShowWindow(hAutomaticPatchFindCheck, SW_SHOW);
+
         hSavedPathButton = CreateWindowW(L"BUTTON", L"Browse",
             WS_CHILD | BS_OWNERDRAW,
             browseX, browseY, browseBtnWidth, browseBtnHeight, hwnd, (HMENU)105, NULL, NULL);
@@ -6287,15 +6660,11 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
         // ========== CATÉGORIE 2 : ADVANCED OPTIONS ==========
 
-         // === CHECKBOX 1 : Distance-based muting ===
+        // === CHECKBOX 1 : Distance-based muting ===
         hEnableDistanceMutingCheck = CreateWindowW(L"BUTTON", L"",
             WS_CHILD | BS_AUTOCHECKBOX,
             60, 145, 20, 20, hwnd, (HMENU)201, NULL, NULL);
-        
-        // Load checkmark icon for Distance Muting checkbox | Charger l'icône checkmark pour la checkbox Distance Muting
-        HMODULE hModuleIcon = GetModuleHandleW(NULL);
-        HICON hCheckIcon = (HICON)LoadImageW(hModuleIcon, MAKEINTRESOURCEW(IDI_CHECKMARK),
-            IMAGE_ICON, 13, 13, LR_DEFAULTCOLOR);
+
         if (hCheckIcon) {
             SendMessage(hEnableDistanceMutingCheck, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hCheckIcon);
         }
@@ -6721,7 +7090,19 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         case 303: ShowCategoryControls(3); break;
 
         case 105:
-            browseSavedPath(hwnd);
+            if (enableAutomaticPatchFind) {
+                // Automatic patch find is enabled | Automatic patch find est activé
+                MessageBoxW(hwnd,
+                    L"Automatic Patch Find is currently enabled.\n\n"
+                    L"To use manual mode and browse for a custom patch location:\n"
+                    L"1. Uncheck 'Automatic Patch Find' in the Patch Configuration tab\n"
+                    L"2. Click 'Save Configuration'\n"
+                    L"3. Then use Browse to select your custom patch location",
+                    L"Manual Mode Disabled", MB_OK | MB_ICONWARNING);
+            }
+            else {
+                browseSavedPath(hwnd);
+            }
             break;
 
         case 101:
@@ -6796,177 +7177,268 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
             break;
 
-        case 1: { // Save Configuration (Patch + Advanced)
-            if (currentCategory == 1) {
-                // === CATÉGORIE 1 : PATCH CONFIGURATION ===
+        case 200: // Automatic Patch Find checkbox
+            if (HIWORD(wParam) == BN_CLICKED) {
+                enableAutomaticPatchFind = (IsDlgButtonChecked(hwnd, 200) == BST_CHECKED);
 
-                // ✅ 1) Vérifier que displayedPathText contient un chemin valide
-                if (wcslen(displayedPathText) == 0) {
-                    showStatusMessage(L"⚠ Error: No game path specified", TRUE);
-                    MessageBoxW(hwnd,
-                        L"Please select your Conan Exiles game folder using the Browse button.",
-                        L"Missing Path", MB_OK | MB_ICONWARNING);
-                    break;
-                }
-
-                showStatusMessage(L"Validating game folder...", FALSE);
-                UpdateWindow(hwnd);
-
-                // ✅ 2) Vérifier UNIQUEMENT que le dossier ConanSandbox\Saved existe (pas Pos.txt)
-                wchar_t savedFolderPath[MAX_PATH];
-                wcscpy_s(savedFolderPath, MAX_PATH, displayedPathText);
-
-                // Si le chemin ne se termine pas par \Saved, l'ajouter
-                if (!wcsstr(savedFolderPath, L"\\ConanSandbox\\Saved")) {
-                    wcscat_s(savedFolderPath, MAX_PATH, L"\\ConanSandbox\\Saved");
-                }
-
-                DWORD savedAttribs = GetFileAttributesW(savedFolderPath);
-                if (savedAttribs == INVALID_FILE_ATTRIBUTES || !(savedAttribs & FILE_ATTRIBUTE_DIRECTORY)) {
-                    showStatusMessage(L"⚠ Error: ConanSandbox\\Saved folder not found", TRUE);
-
-                    wchar_t errorMsg[512];
-                    swprintf(errorMsg, 512,
-                        L"The folder 'ConanSandbox\\Saved' does not exist in:\n%s\n\n"
-                        L"Please verify:\n"
-                        L"1. This is your Conan Exiles game folder\n",
-                        displayedPathText);
-
-                    MessageBoxW(hwnd, errorMsg, L"Folder Not Found", MB_OK | MB_ICONERROR);
-                    break;
-                }
-
-                // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
-                showStatusMessage(L"Saving patch configuration...", FALSE);
-                UpdateWindow(hwnd);
-
-                wchar_t distWhisper[32], distNormal[32], distShout[32];
-                swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
-                swprintf(distNormal, 32, L"%.1f", distanceNormal);
-                swprintf(distShout, 32, L"%.1f", distanceShout);
-
-                // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
-                wchar_t gameFolder[MAX_PATH];
-                wcscpy_s(gameFolder, MAX_PATH, displayedPathText);
-                wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-                if (conanSandbox) {
-                    *conanSandbox = L'\0';
-                }
-
-                BOOL wasAlreadySaved = isPatchAlreadySaved();
-
-                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
-
-                if (!wasAlreadySaved) {
-                    showStatusMessage(L"✅ Patch configuration saved successfully!", FALSE);
-                }
-                else {
-                    showStatusMessage(L"✅ Patch configuration updated successfully!", FALSE);
-                }
-
-                if (enableLogConfig) {
-                    char logMsg[512];
-                    size_t converted = 0;
-                    char savedPathUtf8[MAX_PATH];
-                    wcstombs_s(&converted, savedPathUtf8, MAX_PATH, savedFolderPath, _TRUNCATE);
-
-                    snprintf(logMsg, sizeof(logMsg),
-                        "✅ SECURITY PASSED: Saved folder verified at: %s",
-                        savedPathUtf8);
-                    mumbleAPI.log(ownID, logMsg);
-                }
-            }
-            else if (currentCategory == 2) {
-                // === CATÉGORIE 2 : ADVANCED OPTIONS ===
-                // ✅ CORRECTION : Récupérer TOUTES les valeurs de l'interface (comme Patch Config)
-
-                // Récupérer les touches clavier depuis l'interface
-                // (Les valeurs sont déjà dans whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey
-                // car elles sont mises à jour lors de la capture de touche)
-
-                // Récupérer les checkboxes
-                enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
-                enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
-                enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
-
-                // Récupérer les distances
-                wchar_t distWhisper[32], distNormal[32], distShout[32];
-                GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
-                GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
-                GetWindowTextW(hDistanceShoutEdit, distShout, 32);
-
-                // Convertir les distances
-                distanceWhisper = (float)_wtof(distWhisper);
-                distanceNormal = (float)_wtof(distNormal);
-                distanceShout = (float)_wtof(distShout);
-
-                // ✅ SAUVEGARDER AVEC writeFullConfiguration (comme Patch Config)
-                // pour inclure TOUTES les touches clavier
-                wchar_t gameFolder[MAX_PATH] = L"";
-
-                // Récupérer le chemin du jeu depuis le fichier de config
-                wchar_t* configFolder = getConfigFolderPath();
-                if (configFolder) {
-                    wchar_t configFile[MAX_PATH];
-                    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-                    FILE* f = _wfopen(configFile, L"r");
-                    if (f) {
-                        wchar_t line[512];
-                        while (fgetws(line, 512, f)) {
-                            if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                                wchar_t* pathStart = line + 10;
-                                wchar_t* nl = wcschr(pathStart, L'\n');
-                                if (nl) *nl = L'\0';
-                                wchar_t* cr = wcschr(pathStart, L'\r');
-                                if (cr) *cr = L'\0';
-
-                                // Extraire le dossier parent (sans ConanSandbox\Saved)
-                                wcscpy_s(gameFolder, MAX_PATH, pathStart);
-                                wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-                                if (conanSandbox) {
-                                    *conanSandbox = L'\0';
-                                }
-                                break;
-                            }
+                if (enableAutomaticPatchFind) {
+                    // Find automatic path | Trouver le chemin automatique
+                    wchar_t registryPath[MAX_PATH] = L"";
+                    if (findConanExilesAutomatic(registryPath, MAX_PATH)) {
+                        // Afficher le chemin automatique trouvé (SANS \ConanSandbox\Saved)
+                        wcscpy_s(displayedPathText, MAX_PATH, registryPath);
+                        wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
+                        if (conanSandbox) {
+                            *conanSandbox = L'\0';
                         }
-                        fclose(f);
+
+                        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+                            InvalidateRect(hSavedPathBg, NULL, TRUE);
+                            UpdateWindow(hSavedPathBg);
+                        }
+                        showStatusMessage(L"Automatic path found - Click Save to apply", FALSE);
+                    }
+                    else {
+                        wcscpy_s(displayedPathText, MAX_PATH, L"(Not found)");
+                        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+                            InvalidateRect(hSavedPathBg, NULL, TRUE);
+                            UpdateWindow(hSavedPathBg);
+                        }
+                        showStatusMessage(L"Could not find Conan Exiles - Check Steam installation", TRUE);
                     }
                 }
-
-                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
-
-                // Restaurer le mode vocal
-                float currentVoiceDistance = localVoiceData.voiceDistance;
-                if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
-                    fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
-                    localVoiceData.voiceDistance = distanceWhisper;
-                }
-                else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
-                    localVoiceData.voiceDistance = distanceShout;
-                }
                 else {
-                    localVoiceData.voiceDistance = distanceNormal;
-                }
+                    // MODE MANUEL : Charger le chemin MANUEL depuis la config
+                    wchar_t* configFolder = getConfigFolderPath();
+                    if (configFolder) {
+                        wchar_t configFile[MAX_PATH];
+                        swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+                        FILE* fRead = _wfopen(configFile, L"r");
+                        if (fRead) {
+                            wchar_t line[512];
+                            while (fgetws(line, 512, fRead)) {
+                                if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+                                    wchar_t* pathStart = line + 10;
+                                    wchar_t* nl = wcschr(pathStart, L'\n');
+                                    if (nl) *nl = L'\0';
+                                    wchar_t* cr = wcschr(pathStart, L'\r');
+                                    if (cr) *cr = L'\0';
 
-                // Appliquer les changements
-                applyDistanceToAllPlayers();
+                                    wcscpy_s(displayedPathText, MAX_PATH, pathStart);
+                                    wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
+                                    if (conanSandbox) {
+                                        *conanSandbox = L'\0';
+                                    }
+                                    break;
+                                }
+                            }
+                            fclose(fRead);
+                        }
+                    }
 
-                showStatusMessage(L"Advanced options saved successfully!", FALSE);
+                    if (wcslen(displayedPathText) == 0) {
+                        wcscpy_s(displayedPathText, MAX_PATH, L"No path configured");
+                    }
 
-                if (enableLogConfig) {
-                    char logMsg[512];
-                    snprintf(logMsg, sizeof(logMsg),
-                        "✅ ADVANCED OPTIONS SAVED: WhisperKey=%d NormalKey=%d ShoutKey=%d ConfigKey=%d VoiceToggleKey=%d Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
-                        whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey,
-                        distanceWhisper, distanceNormal, distanceShout,
-                        enableDistanceMuting ? "true" : "false",
-                        enableAutomaticChannelChange ? "true" : "false",
-                        enableVoiceToggle ? "true" : "false");
-                    mumbleAPI.log(ownID, logMsg);
+                    if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+                        InvalidateRect(hSavedPathBg, NULL, TRUE);
+                        UpdateWindow(hSavedPathBg);
+                    }
+                    showStatusMessage(L"Manual path displayed", FALSE);
                 }
             }
             break;
+
+        case 1: { // Save Configuration
+            if (currentCategory == 1) {
+                // === CATÉGORIE 1 : PATCH CONFIGURATION ===
+
+                // ✅ CORRECTION : Construire le chemin COMPLET incluant ConanSandbox\Saved
+                wchar_t pathToSave[MAX_PATH] = L"";
+
+                if (enableAutomaticPatchFind) {
+        // ✅ Mode automatique : REDEMANDER le chemin pour être sûr d'avoir le BON
+        if (!findConanExilesAutomatic(pathToSave, MAX_PATH)) {
+            // ❌ ÉCHEC SILENCIEUX
+            showStatusMessage(L"⚠ Error: Could not find Conan Exiles automatically", TRUE);
+            break;
         }
+
+        // ✅ pathToSave contient maintenant le VRAI chemin Steam complet
+        if (enableLogConfig) {
+            char logMsg[512];
+            size_t converted = 0;
+            char pathUtf8[MAX_PATH];
+            wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
+            snprintf(logMsg, sizeof(logMsg),
+                "✅ AUTOMATIC MODE: Using REAL Steam path: %s", pathUtf8);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+    else {
+        // Mode manuel : utiliser displayedPathText
+        if (wcslen(displayedPathText) == 0) {
+            MessageBoxW(hwnd,
+                L"Please select your Conan Exiles game folder using the Browse button.",
+                L"Missing Path", MB_OK | MB_ICONWARNING);
+
+            showStatusMessage(L"⚠ Error: No game path specified", TRUE);
+            break;
+        }
+
+        // Construire le chemin complet (displayedPathText + \ConanSandbox\Saved)
+        wcscpy_s(pathToSave, MAX_PATH, displayedPathText);
+        wcscat_s(pathToSave, MAX_PATH, L"\\ConanSandbox\\Saved");
+
+        if (enableLogConfig) {
+            char logMsg[512];
+            size_t converted = 0;
+            char pathUtf8[MAX_PATH];
+            wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
+            snprintf(logMsg, sizeof(logMsg),
+                "✅ MANUAL MODE: Using manual path: %s", pathUtf8);
+            mumbleAPI.log(ownID, logMsg);
+        }
+    }
+
+    // ✅ 2) Vérifier UNIQUEMENT que le dossier ConanSandbox\Saved existe
+    DWORD savedAttribs = GetFileAttributesW(pathToSave);
+    if (savedAttribs == INVALID_FILE_ATTRIBUTES || !(savedAttribs & FILE_ATTRIBUTE_DIRECTORY)) {
+        wchar_t errorMsg[512];
+        swprintf(errorMsg, 512,
+            L"The folder 'ConanSandbox\\Saved' does not exist in:\n%s\n\n"
+            L"Please verify:\n"
+            L"1. This is your Conan Exiles game folder\n",
+            pathToSave);
+
+        MessageBoxW(hwnd, errorMsg, L"Folder Not Found", MB_OK | MB_ICONERROR);
+        showStatusMessage(L"⚠ Error: ConanSandbox\\Saved folder not found", TRUE);
+        break;
+    }
+
+    // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
+    wchar_t distWhisper[32], distNormal[32], distShout[32];
+    swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
+    swprintf(distNormal, 32, L"%.1f", distanceNormal);
+    swprintf(distShout, 32, L"%.1f", distanceShout);
+
+    // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
+    wchar_t gameFolder[MAX_PATH];
+    wcscpy_s(gameFolder, MAX_PATH, pathToSave);
+    wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+    if (conanSandbox) {
+        *conanSandbox = L'\0';
+    }
+
+    BOOL wasAlreadySaved = isPatchAlreadySaved();
+
+    writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+    // ✅ MISE À JOUR IMMÉDIATE DE L'AFFICHAGE APRÈS SAUVEGARDE
+    if (enableAutomaticPatchFind) {
+        // Afficher le chemin Steam dans l'interface
+        wcscpy_s(displayedPathText, MAX_PATH, gameFolder);
+        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+            InvalidateRect(hSavedPathBg, NULL, TRUE);
+            UpdateWindow(hSavedPathBg);
+        }
+    }
+
+    if (!wasAlreadySaved) {
+        showStatusMessage(L"✅ Patch configuration saved successfully!", FALSE);
+    }
+    else {
+        showStatusMessage(L"✅ Patch configuration updated successfully!", FALSE);
+    }
+
+    if (enableLogConfig) {
+        char logMsg[512];
+        size_t converted = 0;
+        char savedPathUtf8[MAX_PATH];
+        wcstombs_s(&converted, savedPathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
+
+        snprintf(logMsg, sizeof(logMsg),
+            "✅ SECURITY PASSED: Saved folder verified at: %s",
+            savedPathUtf8);
+        mumbleAPI.log(ownID, logMsg);
+    }
+}
+           else if (currentCategory == 2) {
+               // === CATÉGORIE 2 : ADVANCED OPTIONS (reste inchangé) ===
+               enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+               enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+               enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
+
+               wchar_t distWhisper[32], distNormal[32], distShout[32];
+               GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
+               GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
+               GetWindowTextW(hDistanceShoutEdit, distShout, 32);
+
+               distanceWhisper = (float)_wtof(distWhisper);
+               distanceNormal = (float)_wtof(distNormal);
+               distanceShout = (float)_wtof(distShout);
+
+               wchar_t gameFolder[MAX_PATH] = L"";
+
+               wchar_t* configFolder = getConfigFolderPath();
+               if (configFolder) {
+                   wchar_t configFile[MAX_PATH];
+                   swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+                   FILE* f = _wfopen(configFile, L"r");
+                   if (f) {
+                       wchar_t line[512];
+                       while (fgetws(line, 512, f)) {
+                           if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+                               wchar_t* pathStart = line + 10;
+                               wchar_t* nl = wcschr(pathStart, L'\n');
+                               if (nl) *nl = L'\0';
+                               wchar_t* cr = wcschr(pathStart, L'\r');
+                               if (cr) *cr = L'\0';
+
+                               wcscpy_s(gameFolder, MAX_PATH, pathStart);
+                               wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+                               if (conanSandbox) {
+                                   *conanSandbox = L'\0';
+                               }
+                               break;
+                           }
+                       }
+                       fclose(f);
+                   }
+               }
+
+               writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+               float currentVoiceDistance = localVoiceData.voiceDistance;
+               if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+                   fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+                   localVoiceData.voiceDistance = distanceWhisper;
+               }
+               else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+                   localVoiceData.voiceDistance = distanceShout;
+               }
+               else {
+                   localVoiceData.voiceDistance = distanceNormal;
+               }
+
+               applyDistanceToAllPlayers();
+
+               showStatusMessage(L"Advanced options saved successfully!", FALSE);
+
+               if (enableLogConfig) {
+                   char logMsg[512];
+                   snprintf(logMsg, sizeof(logMsg),
+                       "✅ ADVANCED OPTIONS SAVED: WhisperKey=%d NormalKey=%d ShoutKey=%d ConfigKey=%d VoiceToggleKey=%d Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
+                       whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey,
+                       distanceWhisper, distanceNormal, distanceShout,
+                       enableDistanceMuting ? "true" : "false",
+                       enableAutomaticChannelChange ? "true" : "false",
+                       enableVoiceToggle ? "true" : "false");
+                   mumbleAPI.log(ownID, logMsg);
+               }
+           }
+           break;
+       }
 
         case 11: { // Save Voice Range (Advanced Options)
             showPresetSaveDialog();
@@ -7140,39 +7612,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         LPDRAWITEMSTRUCT lpDIS = (LPDRAWITEMSTRUCT)lParam;
         int ctrlId = lpDIS->CtlID;
 
-        // Draw "Automatic Patch Find" label with Patch Configuration style | Dessiner le label Automatic Patch Find avec le style de Patch Configuration
-        if (ctrlId == 2000) {
-            HDC hdc = lpDIS->hDC;
-            RECT rect = lpDIS->rcItem;
-
-            SetBkMode(hdc, TRANSPARENT);
-
-            wchar_t text[256] = L"Automatic Patch Find";
-            GetWindowTextW(lpDIS->hwndItem, text, 256);
-
-            HFONT hTextFont = hFont ? hFont : CreateFontW(
-                16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-            HFONT hOldFont = (HFONT)SelectObject(hdc, hTextFont);
-
-            SetBkMode(hdc, TRANSPARENT);
-
-            // Shadow text | Texte ombre
-            SetTextColor(hdc, RGB(0, 0, 0));
-            RECT shadowRect = rect;
-            OffsetRect(&shadowRect, 1, 1);
-            DrawTextW(hdc, text, -1, &shadowRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            // Main text in white | Texte principal en blanc
-            SetTextColor(hdc, RGB(240, 240, 240));
-            DrawTextW(hdc, text, -1, &rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-            SelectObject(hdc, hOldFont);
-            if (!hFont) DeleteObject(hTextFont);
-
-            return TRUE;
-        }
+    
 
         if (ctrlId >= 2001 && ctrlId <= 2005) {
             HDC hdc = lpDIS->hDC;
@@ -7460,7 +7900,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return TRUE;
         }
 
-        // ✅ Dessiner l'image Path_Box AVEC TEXTE par-dessus
+        // Dans WM_DRAWITEM pour ctrlId == 1100
         if (ctrlId == 1100) {
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
@@ -7499,8 +7939,35 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 DeleteObject(hBitmap);
             }
 
-            if (wcslen(displayedPathText) > 0) {
-                // Sélection de la police (préférer hPathFont)
+            // Convertir modFilePath de char* en wchar_t* pour affichage
+            wchar_t displayPath[MAX_PATH] = L"";
+
+            if (enableAutomaticPatchFind) {
+                // Mode automatique : afficher le chemin automatique détecté
+                wchar_t autoPath[MAX_PATH] = L"";
+                if (findConanExilesAutomatic(autoPath, MAX_PATH)) {
+                    // Supprimer \ConanSandbox\Saved pour n'afficher que le dossier du jeu
+                    wcscpy_s(displayPath, MAX_PATH, autoPath);
+                    wchar_t* conanSandbox = wcsstr(displayPath, L"\\ConanSandbox\\Saved");
+                    if (conanSandbox) {
+                        *conanSandbox = L'\0';
+                    }
+                }
+                else {
+                    wcscpy_s(displayPath, MAX_PATH, L"(Not found)");
+                }
+            }
+            else {
+                // Mode manuel : afficher displayedPathText (déjà sans \ConanSandbox\Saved)
+                wcscpy_s(displayPath, MAX_PATH, displayedPathText);
+            }
+
+            if (wcslen(displayPath) == 0) {
+                wcscpy_s(displayPath, MAX_PATH, L"(Not configured)");
+            }
+
+            if (wcslen(displayPath) > 0) {
+                // Sélection de la police
                 HFONT hTextFont = NULL;
                 HFONT hOldFont = NULL;
                 BOOL createdLocalFont = FALSE;
@@ -7535,20 +8002,16 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
                 // mesurer le texte actuel avec la police sélectionnée
                 SIZE textSize = { 0, 0 };
-                GetTextExtentPoint32W(hdc, displayedPathText, (int)wcslen(displayedPathText), &textSize);
+                GetTextExtentPoint32W(hdc, displayPath, (int)wcslen(displayPath), &textSize);
 
                 if (textSize.cx <= availWidth) {
                     // texte tient → on calcule une position exacte (pixel-perfect)
                     int textX = imageRect.left + (bmWidth - textSize.cx) / 2;
                     int textY = imageRect.top + (bmHeight - textSize.cy) / 2;
 
-                    // Ombre
-                    SetTextColor(hdc, RGB(0, 0, 0));
-                    TextOutW(hdc, textX + 1, textY + 1, displayedPathText, (int)wcslen(displayedPathText));
-
-                    // Texte principal (blanc)
+                    // ✅ Texte principal UNIQUEMENT (PAS d'ombre)
                     SetTextColor(hdc, RGB(255, 255, 255));
-                    TextOutW(hdc, textX, textY, displayedPathText, (int)wcslen(displayedPathText));
+                    TextOutW(hdc, textX, textY, displayPath, (int)wcslen(displayPath));
                 }
                 else {
                     // trop long → utiliser DrawText avec DT_END_ELLIPSIS et centrer verticalement
@@ -7558,7 +8021,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
                     // Calcule la hauteur du texte (DT_CALCRECT) pour centrer verticalement
                     RECT calcRect = dtRect;
-                    DrawTextW(hdc, displayedPathText, -1, &calcRect, DT_SINGLELINE | DT_CALCRECT | DT_END_ELLIPSIS);
+                    DrawTextW(hdc, displayPath, -1, &calcRect, DT_SINGLELINE | DT_CALCRECT | DT_END_ELLIPSIS);
 
                     int textH = calcRect.bottom - calcRect.top;
                     if (textH <= 0) textH = (bmHeight / 2);
@@ -7568,16 +8031,9 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                     dtRect.top = top;
                     dtRect.bottom = top + textH;
 
-                    // Ombre
-                    RECT shadowRect = dtRect;
-                    OffsetRect(&shadowRect, 1, 1);
-                    SetTextColor(hdc, RGB(0, 0, 0));
-                    DrawTextW(hdc, displayedPathText, -1, &shadowRect,
-                        DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-
-                    // Texte principal (blanc)
+                    // ✅ Texte principal UNIQUEMENT (PAS d'ombre)
                     SetTextColor(hdc, RGB(255, 255, 255));
-                    DrawTextW(hdc, displayedPathText, -1, &dtRect,
+                    DrawTextW(hdc, displayPath, -1, &dtRect,
                         DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
                 }
 
@@ -7625,7 +8081,37 @@ static int showConfigInterface() {
         mumbleAPI.log(ownID, "showConfigInterface: Function started");
     }
 
+    // Try automatic patch find if enabled | Essayer le patch automatique si activé
+    if (enableAutomaticPatchFind) {
+        wchar_t automaticPath[MAX_PATH] = L"";
+        if (findConanExilesAutomatic(automaticPath, MAX_PATH)) {
+            wcscpy_s(savedPath, MAX_PATH, automaticPath);
+            size_t converted = 0;
+            wcstombs_s(&converted, modFilePath, MAX_PATH, automaticPath, _TRUNCATE);
+            strcat_s(modFilePath, MAX_PATH, "\\Pos.txt");
 
+            // Save automatic path to config immediately | Sauvegarder le chemin automatique immédiatement
+            wchar_t gameFolder[MAX_PATH];
+            wcscpy_s(gameFolder, MAX_PATH, automaticPath);
+            wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+            if (conanSandbox) {
+                *conanSandbox = L'\0';
+            }
+
+            wchar_t distWhisper[32], distNormal[32], distShout[32];
+            swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
+            swprintf(distNormal, 32, L"%.1f", distanceNormal);
+            swprintf(distShout, 32, L"%.1f", distanceShout);
+
+            writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+            if (enableLogConfig) {
+                char logMsg[512];
+                snprintf(logMsg, sizeof(logMsg), "Automatic patch found, applied and saved: %s", modFilePath);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+    }
 
     readConfigurationSettings();
 
@@ -8950,6 +9436,107 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
         mumbleAPI.log(ownID, "=== PLUGIN INITIALIZATION STARTED ===");
     }
 
+    // ========== STEP 0: Check if interface should be opened | Vérifier si l'interface doit être ouverte ==========
+    BOOL shouldOpenInterface = FALSE;
+    wchar_t* configFolder = getConfigFolderPath();
+
+    if (configFolder) {
+        wchar_t configFile[MAX_PATH];
+        swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+
+        DWORD fileAttribs = GetFileAttributesW(configFile);
+
+        // Case 1: First installation (file doesn't exist) | Cas 1 : Première installation (fichier n'existe pas)
+        if (fileAttribs == INVALID_FILE_ATTRIBUTES) {
+            shouldOpenInterface = TRUE;
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "FIRST INSTALLATION: plugin.cfg not found - opening interface");
+            }
+        }
+        else {
+            // File exists - check if paths are VALID | Fichier existe - vérifier si les chemins sont VALIDES
+            FILE* file = _wfopen(configFile, L"r");
+            if (file) {
+                wchar_t savedPath[MAX_PATH] = L"";
+                wchar_t automaticPath[MAX_PATH] = L"";
+                BOOL foundAutomaticPatchFind = FALSE;
+                BOOL automaticPatchFindEnabled = FALSE;
+
+                wchar_t line[512];
+                while (fgetws(line, 512, file)) {
+                    if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+                        wchar_t* pathStart = line + 10;
+                        wchar_t* nl = wcschr(pathStart, L'\n');
+                        if (nl) *nl = L'\0';
+                        wchar_t* cr = wcschr(pathStart, L'\r');
+                        if (cr) *cr = L'\0';
+                        wcscpy_s(savedPath, MAX_PATH, pathStart);
+                    }
+                    else if (wcsncmp(line, L"AutomaticSavedPath=", 19) == 0) {
+                        wchar_t* pathStart = line + 19;
+                        wchar_t* nl = wcschr(pathStart, L'\n');
+                        if (nl) *nl = L'\0';
+                        wchar_t* cr = wcschr(pathStart, L'\r');
+                        if (cr) *cr = L'\0';
+                        wcscpy_s(automaticPath, MAX_PATH, pathStart);
+                    }
+                    else if (wcsncmp(line, L"AutomaticPatchFind=", 19) == 0) {
+                        wchar_t* value = line + 19;
+                        while (*value == L' ' || *value == L'\t') value++;
+                        foundAutomaticPatchFind = TRUE;
+                        automaticPatchFindEnabled = (wcsncmp(value, L"true", 4) == 0 || wcsncmp(value, L"True", 4) == 0);
+                    }
+                }
+                fclose(file);
+
+                // Check if the ACTIVE path is INVALID | Vérifier si le chemin ACTIF est INVALIDE
+                wchar_t pathToCheck[MAX_PATH] = L"";
+
+                if (automaticPatchFindEnabled && wcslen(automaticPath) > 0) {
+                    wcscpy_s(pathToCheck, MAX_PATH, automaticPath);
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "VALIDATION: Checking AUTOMATIC path");
+                    }
+                }
+                else if (wcslen(savedPath) > 0) {
+                    wcscpy_s(pathToCheck, MAX_PATH, savedPath);
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "VALIDATION: Checking MANUAL path");
+                    }
+                }
+
+                // Case 2: Path is configured but INVALID | Cas 2 : Chemin configuré mais INVALIDE
+                if (wcslen(pathToCheck) > 0) {
+                    DWORD pathAttribs = GetFileAttributesW(pathToCheck);
+                    if (pathAttribs == INVALID_FILE_ATTRIBUTES || !(pathAttribs & FILE_ATTRIBUTE_DIRECTORY)) {
+                        shouldOpenInterface = TRUE;
+
+                        char logMsg[512];
+                        size_t converted = 0;
+                        char pathUtf8[MAX_PATH];
+                        wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToCheck, _TRUNCATE);
+                        snprintf(logMsg, sizeof(logMsg),
+                            "INVALID PATH DETECTED: %s does not exist - opening interface",
+                            pathUtf8);
+                        mumbleAPI.log(ownID, logMsg);
+                    }
+                    else {
+                        if (enableLogGeneral) {
+                            mumbleAPI.log(ownID, "PATH VALID: Interface will NOT open");
+                        }
+                    }
+                }
+                else {
+                    // No path configured at all | Aucun chemin configuré
+                    shouldOpenInterface = TRUE;
+                    if (enableLogGeneral) {
+                        mumbleAPI.log(ownID, "NO PATH CONFIGURED: Opening interface");
+                    }
+                }
+            }
+        }
+    }
+
     // ========== STEP 1: Reset all flags and states | Réinitialiser tous les flags et états ==========
     enableGetPlayerCoordinates = TRUE;
     overlayThreadRunning = FALSE;
@@ -9021,10 +9608,27 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
 
     // ========== STEP 10: Load configuration | Charger la configuration ==========
     loadVoiceDistancesFromConfig();
+
+    // Try automatic patch find if enabled | Essayer le patch automatique si activé
+    if (enableAutomaticPatchFind) {
+        wchar_t automaticPath[MAX_PATH] = L"";
+        if (findConanExilesAutomatic(automaticPath, MAX_PATH)) {
+            wcscpy_s(savedPath, MAX_PATH, automaticPath);
+            size_t converted = 0;
+            wcstombs_s(&converted, modFilePath, MAX_PATH, automaticPath, _TRUNCATE);
+            strcat_s(modFilePath, MAX_PATH, "\\Pos.txt");
+
+            if (enableLogConfig) {
+                char logMsg[512];
+                snprintf(logMsg, sizeof(logMsg), "Automatic patch found and applied: %s", modFilePath);
+                mumbleAPI.log(ownID, logMsg);
+            }
+        }
+    }
+
     initializeVoicePresets();
     loadPresetsFromConfigFile();
     loadDefaultSettingsFromConfig();
-
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "Init: Configuration loaded successfully");
     }
@@ -9054,12 +9658,13 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
     // ========== STEP 12: Configure mod file path | Configurer le chemin du fichier mod ==========
     readConfigurationSettings();
 
-    wchar_t* configFolder = getConfigFolderPath();
+    configFolder = getConfigFolderPath();
     if (configFolder) {
         wchar_t configFile[MAX_PATH];
         swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
 
         wchar_t savedPath[MAX_PATH] = L"";
+        wchar_t automaticPath[MAX_PATH] = L"";
 
         FILE* file = _wfopen(configFile, L"r");
         if (file) {
@@ -9073,12 +9678,26 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
                     if (cr) *cr = L'\0';
                     wcscpy_s(savedPath, MAX_PATH, pathStart);
                 }
+                else if (wcsncmp(line, L"AutomaticSavedPath=", 19) == 0) {
+                    wchar_t* pathStart = line + 19;
+                    wchar_t* nl = wcschr(pathStart, L'\n');
+                    if (nl) *nl = L'\0';
+                    wchar_t* cr = wcschr(pathStart, L'\r');
+                    if (cr) *cr = L'\0';
+                    wcscpy_s(automaticPath, MAX_PATH, pathStart);
+                }
             }
             fclose(file);
         }
 
         wchar_t pathToUse[MAX_PATH] = L"";
-        if (wcslen(savedPath) > 0) {
+        if (enableAutomaticPatchFind && wcslen(automaticPath) > 0) {
+            wcscpy_s(pathToUse, MAX_PATH, automaticPath);
+            if (enableLogGeneral) {
+                mumbleAPI.log(ownID, "Init: Using AUTOMATIC path for mod file");
+            }
+        }
+        else if (wcslen(savedPath) > 0) {
             wcscpy_s(pathToUse, MAX_PATH, savedPath);
             if (enableLogGeneral) {
                 mumbleAPI.log(ownID, "Init: Using MANUAL path for mod file");
@@ -9098,9 +9717,17 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
         }
     }
 
-    // ========== STEP 13: Show configuration dialog if needed | Afficher le dialogue de configuration si nécessaire ==========
-    if (!isPatchAlreadySaved()) {
+    // ========== STEP 13: Show configuration dialog ONLY if needed | Afficher le dialogue UNIQUEMENT si nécessaire ==========
+    if (shouldOpenInterface) {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "OPENING INTERFACE: First installation or invalid path detected");
+        }
         _beginthread(showPathSelectionDialogThread, 0, NULL);
+    }
+    else {
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "INTERFACE NOT OPENED: Valid configuration found");
+        }
     }
 
     // ========== STEP 14: Install key monitoring | Installer la surveillance des touches ==========
@@ -9127,7 +9754,9 @@ mumble_error_t mumble_init(mumble_plugin_id_t pluginID) {
     hubDescriptionMonitorThreadHandle = (HANDLE)_beginthread(hubDescriptionMonitorThread, 0, NULL);
 
     // ========== STEP 17: Create voice overlay if enabled | Créer l'overlay vocal si activé ==========
-    if (enableVoiceOverlay && enableDistanceMuting) {
+// ========== STEP 17: Create voice overlay if enabled | Créer l'overlay vocal si activé ==========
+// Create overlay immediately if enabled, even if distance muting not yet enabled | Créer l'overlay immédiatement si activé, même si muting non activé
+    if (enableVoiceOverlay) {
         createVoiceOverlay();
         overlayMonitorThreadHandle = (HANDLE)_beginthread(overlayMonitorThread, 0, NULL);
 
@@ -9164,7 +9793,7 @@ struct MumbleStringWrapper mumble_getName() {
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 };
     version.major = 6;
-    version.minor = 3;
+    version.minor = 4;
     version.patch = 4;
 
     return version;

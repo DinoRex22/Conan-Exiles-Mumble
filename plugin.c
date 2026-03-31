@@ -9942,7 +9942,7 @@ mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 };
     version.major = 6;
     version.minor = 4;
-    version.patch = 5;
+    version.patch = 6;
 
     return version;
 }
@@ -10008,12 +10008,23 @@ PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerConnected(mumble_con
 
     maxAudioDistanceRetrieved = FALSE;
 
+    // Reset voice mode to Normal on reconnection | Réinitialiser au mode Normal à la reconnexion
+    currentVoiceMode = 1; // Normal
+    localVoiceData.voiceDistance = distanceNormal;
+
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "REAL adaptive volume system initialized - smooth real-time volume control active");
     }
 
-    if (enableVoiceOverlay && enableDistanceMuting && hVoiceOverlay == NULL) {
-        createVoiceOverlay();
+    // DO NOT recreate overlay - it should persist across connections | NE PAS recréer l'overlay
+    // Only refresh display to show current voice mode | Rafraîchir uniquement l'affichage
+    if (hVoiceOverlay && IsWindow(hVoiceOverlay)) {
+        InvalidateRect(hVoiceOverlay, NULL, TRUE);
+        UpdateWindow(hVoiceOverlay);
+
+        if (enableLogGeneral) {
+            mumbleAPI.log(ownID, "SERVER CONNECTED: Overlay refreshed (persistent mode)");
+        }
     }
 }
 
@@ -10209,10 +10220,16 @@ PLUGIN_EXPORT void PLUGIN_CALLING_CONVENTION mumble_onServerDisconnected(mumble_
     lastVoiceDataSent = 0;
     lastDistanceCheck = 0;
 
+    // Reset voice mode to default | Réinitialiser le mode de voix par défaut
+    currentVoiceMode = 1; // Normal mode
+    localVoiceData.voiceDistance = distanceNormal;
+
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "REAL adaptive volume system reset with low-pass filtering - audio processing restored");
     }
-    destroyVoiceOverlay();
+
+    // DO NOT destroy overlay on disconnect | NE PAS détruire l'overlay lors de la déconnexion
+    // Overlay stays active across server connections | L'overlay reste actif entre les connexions
 }
 
 void mumble_shutdown() {

@@ -172,13 +172,13 @@ ULONGLONG lastInterfaceUpdate = 0;
 
 // Voice toggle variables | Variables pour le toggle de voix
 int voiceToggleKey = 84;
-BOOL enableVoiceToggle = FALSE;
+BOOL enableVoiceToggle = TRUE;
 ULONGLONG lastVoiceTogglePress = 0;
 
 // Key bindings | Raccourcis clavier
-int whisperKey = 17;
-int normalKey = 86;
-int shoutKey = 16;
+int whisperKey = 97;
+int normalKey = 98;
+int shoutKey = 99;
 int configUIKey = 121;
 
 // Key monitoring variables | Variables de surveillance des touches globales
@@ -236,8 +236,8 @@ double hubMinimumNormal = 5.0;
 double hubMaximumNormal = 15.0;
 double hubMinimumShout = 15.0;
 double hubMaximumShout = 50.0;
-BOOL hubForceDistanceBasedMuting = FALSE;
-BOOL hubForceAutomaticChannelSwitching = FALSE;
+BOOL hubForceDistanceBasedMuting = TRUE;
+BOOL hubForceAutomaticChannelSwitching = TRUE;
 
 // Voice system variables | Variables globales pour le système de voix
 CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
@@ -247,9 +247,9 @@ ULONGLONG lastVoiceDataSent = 0;
 ULONGLONG lastKeyCheck = 0;
 
 // Voice distance settings | Paramètres de distance vocale
-float distanceWhisper = 2.0f;
-float distanceNormal = 15.0f;
-float distanceShout = 50.0f;
+float distanceWhisper = 3.0f;
+float distanceNormal = 13.0f;
+float distanceShout = 26.0f;
 
 // Voice features | Fonctionnalités vocales
 BOOL enableDistanceMuting = FALSE;
@@ -711,9 +711,9 @@ static void readConfigurationSettings() {
             fwprintf(f, L"ShoutKey=%d\n", shoutKey);
             fwprintf(f, L"ConfigUIKey=%d\n", configUIKey);
             fwprintf(f, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-            fwprintf(f, L"DistanceWhisper=%.1f\n", foundDistanceWhisper ? distanceWhisper : 2.0f);
-            fwprintf(f, L"DistanceNormal=%.1f\n", foundDistanceNormal ? distanceNormal : 10.0f);
-            fwprintf(f, L"DistanceShout=%.1f\n", foundDistanceShout ? distanceShout : 15.0f);
+            fwprintf(f, L"DistanceWhisper=%.1f\n", foundDistanceWhisper ? distanceWhisper : 3.0f);
+            fwprintf(f, L"DistanceNormal=%.1f\n", foundDistanceNormal ? distanceNormal : 13.0f);
+            fwprintf(f, L"DistanceShout=%.1f\n", foundDistanceShout ? distanceShout : 26.0f);
             fwprintf(f, L"VoiceToggleKey=%d\n", voiceToggleKey);
             fwprintf(f, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
             fclose(f);
@@ -858,9 +858,9 @@ static void initializeVoicePresets(void) {
         voicePresets[i].whisperDistance = 2.0f;
         voicePresets[i].normalDistance = 10.0f;
         voicePresets[i].shoutDistance = 15.0f;
-        voicePresets[i].whisperKey = 17;      // Ctrl | Contrôle
-        voicePresets[i].normalKey = 86;       // V
-        voicePresets[i].shoutKey = 16;        // Shift | Maj
+        voicePresets[i].whisperKey = 97;      // num 1
+        voicePresets[i].normalKey = 98;       // num 2
+        voicePresets[i].shoutKey = 99;        // num 3
         voicePresets[i].voiceToggleKey = 84;  // T
         voicePresets[i].isUsed = FALSE;
     }
@@ -9941,7 +9941,7 @@ struct MumbleStringWrapper mumble_getName() {
 mumble_version_t mumble_getVersion() {
     mumble_version_t version = { 0 };
     version.major = 6;
-    version.minor = 4;
+    version.minor = 5;
     version.patch = 6;
 
     return version;

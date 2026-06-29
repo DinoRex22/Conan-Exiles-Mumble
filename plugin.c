@@ -165,7 +165,7 @@ HWND hDistanceServerLimitShout = NULL;
 int currentCategory = 1;
 BOOL isCapturingKey = FALSE;
 int captureKeyTarget = 0;
-wchar_t savedPath[MAX_PATH] = L""; 
+wchar_t savedPath[MAX_PATH] = L"";
 wchar_t displayedPathText[MAX_PATH] = L"";
 BOOL isUpdatingInterface = FALSE;
 ULONGLONG lastInterfaceUpdate = 0;
@@ -903,7 +903,7 @@ static void saveVoicePreset(int presetIndex, const char* presetName) {
     if (hConfigDialog && IsWindow(hConfigDialog)) {
         updatePresetLabels();
     }
-   
+
     if (enableLogConfig) {
         char logMsg[256];
         snprintf(logMsg, sizeof(logMsg),
@@ -2303,8 +2303,8 @@ static void parseHubDescription(const char* description) {
         free(descCopyZones);
     }
 
-        // ========== PARSE RACES AFTER ZONES | PARSER LES RACES APRÈS LES ZONES ==========
-    // Reset race count | Réinitialiser le compteur de races
+    // ========== PARSE RACES AFTER ZONES | PARSER LES RACES APRÈS LES ZONES ==========
+// Reset race count | Réinitialiser le compteur de races
     raceCount = 0;
     currentPlayerRaceIndex = -1;
     currentListenAddDistance = 0.0f;
@@ -2531,7 +2531,7 @@ static void parseHubDescription(const char* description) {
 
     validatePlayerDistances();
 
-        // ========== PARSE DEFAULT SETTINGS AFTER RACES | PARSER LES PARAMÈTRES PAR DÉFAUT APRÈS LES RACES ==========
+    // ========== PARSE DEFAULT SETTINGS AFTER RACES | PARSER LES PARAMÈTRES PAR DÉFAUT APRÈS LES RACES ==========
     char* defaultSettingsContext = NULL;
     char* descCopyDefaultSettings = (char*)malloc(descLen * 2 + 1);
     if (descCopyDefaultSettings) {
@@ -2653,7 +2653,7 @@ static void parseHubDescription(const char* description) {
     BOOL racesSuccess = (raceCount > 0 || insideRacesSection);
     BOOL playerInRace = (currentPlayerRaceIndex != -1);
 
-    displayHubParametersConfirmation(globalSuccess, racesSuccess, playerInRace, zoneSectionFound);    
+    displayHubParametersConfirmation(globalSuccess, racesSuccess, playerInRace, zoneSectionFound);
     // Apply default settings AFTER all parsing is complete | Appliquer les paramètres par défaut APRÈS le parsing complet
     mumble_connection_t connection;
     if (mumbleAPI.getActiveServerConnection(ownID, &connection) == MUMBLE_STATUS_OK) {
@@ -3294,8 +3294,8 @@ static float calculateScientificCutoffFrequency(float distance) {
 
 // Calculate Direct-to-Reverberant Ratio based on distance | Calculer le ratio direct/réverbéré basé sur la distance
 static float calculateDRR(float distance, float minDistance) {
-// Direct-to-Reverberant Ratio (DRR)
-// Based on room acoustics approximation
+    // Direct-to-Reverberant Ratio (DRR)
+    // Based on room acoustics approximation
 
     float d = distance;
     float d_ref = minDistance;
@@ -4294,10 +4294,15 @@ static void createVoiceOverlay() {
     int overlayWidth = 130;
     int overlayHeight = 32;
 
-    // Position at bottom right | Position en bas à droite
+    // Position at top center | Position en haut au centre
+    
+    int posX = (screenWidth - overlayWidth) / 2;
+    int posY = 5;
+
+    /*
     int posX = screenWidth - overlayWidth - 25;
     int posY = screenHeight - (screenHeight * 2 / 100) - overlayHeight;
-
+    */
     // Create with extended styles for fullscreen compatibility | Créer avec styles étendus pour compatibilité plein écran
     hVoiceOverlay = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -4600,7 +4605,7 @@ static void ShowCategoryControls(int category) {
         if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_HIDE);
 
         // Hide Automatic Patch Find controls in category 3 | Masquer les contrôles Automatic Patch Find en catégorie 3
-        
+
         HWND hAutomaticPatchFindLabelHide = GetDlgItem(hConfigDialog, 2000);
         if (hAutomaticPatchFindLabelHide) ShowWindow(hAutomaticPatchFindLabelHide, SW_HIDE);
 
@@ -7309,181 +7314,181 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                     // ✅ Utiliser le VRAI chemin Steam (pas displayedPathText)
                     wcscpy_s(pathToSave, MAX_PATH, realSteamPath);
 
-        // ✅ pathToSave contient maintenant le VRAI chemin Steam complet
-        if (enableLogConfig) {
-            char logMsg[512];
-            size_t converted = 0;
-            char pathUtf8[MAX_PATH];
-            wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
-            snprintf(logMsg, sizeof(logMsg),
-                "✅ AUTOMATIC MODE: Using REAL Steam path: %s", pathUtf8);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-    else {
-        // Mode manuel : utiliser displayedPathText
-        if (wcslen(displayedPathText) == 0) {
-            MessageBoxW(hwnd,
-                L"Please select your Conan Exiles game folder using the Browse button.",
-                L"Missing Path", MB_OK | MB_ICONWARNING);
+                    // ✅ pathToSave contient maintenant le VRAI chemin Steam complet
+                    if (enableLogConfig) {
+                        char logMsg[512];
+                        size_t converted = 0;
+                        char pathUtf8[MAX_PATH];
+                        wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
+                        snprintf(logMsg, sizeof(logMsg),
+                            "✅ AUTOMATIC MODE: Using REAL Steam path: %s", pathUtf8);
+                        mumbleAPI.log(ownID, logMsg);
+                    }
+                }
+                else {
+                    // Mode manuel : utiliser displayedPathText
+                    if (wcslen(displayedPathText) == 0) {
+                        MessageBoxW(hwnd,
+                            L"Please select your Conan Exiles game folder using the Browse button.",
+                            L"Missing Path", MB_OK | MB_ICONWARNING);
 
-            showStatusMessage(L"⚠ Error: No game path specified", TRUE);
+                        showStatusMessage(L"⚠ Error: No game path specified", TRUE);
+                        break;
+                    }
+
+                    // Construire le chemin complet (displayedPathText + \ConanSandbox\Saved)
+                    wcscpy_s(pathToSave, MAX_PATH, displayedPathText);
+                    wcscat_s(pathToSave, MAX_PATH, L"\\ConanSandbox\\Saved");
+
+                    if (enableLogConfig) {
+                        char logMsg[512];
+                        size_t converted = 0;
+                        char pathUtf8[MAX_PATH];
+                        wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
+                        snprintf(logMsg, sizeof(logMsg),
+                            "✅ MANUAL MODE: Using manual path: %s", pathUtf8);
+                        mumbleAPI.log(ownID, logMsg);
+                    }
+                }
+
+                // ✅ 2) Vérifier UNIQUEMENT que le dossier ConanSandbox\Saved existe
+                DWORD savedAttribs = GetFileAttributesW(pathToSave);
+                if (savedAttribs == INVALID_FILE_ATTRIBUTES || !(savedAttribs & FILE_ATTRIBUTE_DIRECTORY)) {
+                    wchar_t errorMsg[512];
+                    swprintf(errorMsg, 512,
+                        L"The folder 'ConanSandbox\\Saved' does not exist in:\n%s\n\n"
+                        L"Please verify:\n"
+                        L"1. This is your Conan Exiles game folder\n",
+                        pathToSave);
+
+                    MessageBoxW(hwnd, errorMsg, L"Folder Not Found", MB_OK | MB_ICONERROR);
+                    showStatusMessage(L"⚠ Error: ConanSandbox\\Saved folder not found", TRUE);
+                    break;
+                }
+
+                // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
+                wchar_t distWhisper[32], distNormal[32], distShout[32];
+                swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
+                swprintf(distNormal, 32, L"%.1f", distanceNormal);
+                swprintf(distShout, 32, L"%.1f", distanceShout);
+
+                // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
+                wchar_t gameFolder[MAX_PATH];
+                wcscpy_s(gameFolder, MAX_PATH, pathToSave);
+                wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+                if (conanSandbox) {
+                    *conanSandbox = L'\0';
+                }
+
+                BOOL wasAlreadySaved = isPatchAlreadySaved();
+
+                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+                // ✅ MISE À JOUR IMMÉDIATE DE L'AFFICHAGE APRÈS SAUVEGARDE
+                if (enableAutomaticPatchFind) {
+                    // Afficher le chemin Steam dans l'interface
+                    wcscpy_s(displayedPathText, MAX_PATH, gameFolder);
+                    if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+                        InvalidateRect(hSavedPathBg, NULL, TRUE);
+                        UpdateWindow(hSavedPathBg);
+                    }
+                }
+
+                if (!wasAlreadySaved) {
+                    showStatusMessage(L"✅ Patch configuration saved successfully!", FALSE);
+                }
+                else {
+                    showStatusMessage(L"✅ Patch configuration updated successfully!", FALSE);
+                }
+
+                if (enableLogConfig) {
+                    char logMsg[512];
+                    size_t converted = 0;
+                    char savedPathUtf8[MAX_PATH];
+                    wcstombs_s(&converted, savedPathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
+
+                    snprintf(logMsg, sizeof(logMsg),
+                        "✅ SECURITY PASSED: Saved folder verified at: %s",
+                        savedPathUtf8);
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
+            else if (currentCategory == 2) {
+                // === CATÉGORIE 2 : ADVANCED OPTIONS (reste inchangé) ===
+                enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+                enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+                enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
+
+                wchar_t distWhisper[32], distNormal[32], distShout[32];
+                GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
+                GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
+                GetWindowTextW(hDistanceShoutEdit, distShout, 32);
+
+                distanceWhisper = (float)_wtof(distWhisper);
+                distanceNormal = (float)_wtof(distNormal);
+                distanceShout = (float)_wtof(distShout);
+
+                wchar_t gameFolder[MAX_PATH] = L"";
+
+                wchar_t* configFolder = getConfigFolderPath();
+                if (configFolder) {
+                    wchar_t configFile[MAX_PATH];
+                    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
+                    FILE* f = _wfopen(configFile, L"r");
+                    if (f) {
+                        wchar_t line[512];
+                        while (fgetws(line, 512, f)) {
+                            if (wcsncmp(line, L"SavedPath=", 10) == 0) {
+                                wchar_t* pathStart = line + 10;
+                                wchar_t* nl = wcschr(pathStart, L'\n');
+                                if (nl) *nl = L'\0';
+                                wchar_t* cr = wcschr(pathStart, L'\r');
+                                if (cr) *cr = L'\0';
+
+                                wcscpy_s(gameFolder, MAX_PATH, pathStart);
+                                wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+                                if (conanSandbox) {
+                                    *conanSandbox = L'\0';
+                                }
+                                break;
+                            }
+                        }
+                        fclose(f);
+                    }
+                }
+
+                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
+
+                float currentVoiceDistance = localVoiceData.voiceDistance;
+                if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
+                    fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
+                    localVoiceData.voiceDistance = distanceWhisper;
+                }
+                else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
+                    localVoiceData.voiceDistance = distanceShout;
+                }
+                else {
+                    localVoiceData.voiceDistance = distanceNormal;
+                }
+
+                applyDistanceToAllPlayers();
+
+                showStatusMessage(L"Advanced options saved successfully!", FALSE);
+
+                if (enableLogConfig) {
+                    char logMsg[512];
+                    snprintf(logMsg, sizeof(logMsg),
+                        "✅ ADVANCED OPTIONS SAVED: WhisperKey=%d NormalKey=%d ShoutKey=%d ConfigKey=%d VoiceToggleKey=%d Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
+                        whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey,
+                        distanceWhisper, distanceNormal, distanceShout,
+                        enableDistanceMuting ? "true" : "false",
+                        enableAutomaticChannelChange ? "true" : "false",
+                        enableVoiceToggle ? "true" : "false");
+                    mumbleAPI.log(ownID, logMsg);
+                }
+            }
             break;
         }
-
-        // Construire le chemin complet (displayedPathText + \ConanSandbox\Saved)
-        wcscpy_s(pathToSave, MAX_PATH, displayedPathText);
-        wcscat_s(pathToSave, MAX_PATH, L"\\ConanSandbox\\Saved");
-
-        if (enableLogConfig) {
-            char logMsg[512];
-            size_t converted = 0;
-            char pathUtf8[MAX_PATH];
-            wcstombs_s(&converted, pathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
-            snprintf(logMsg, sizeof(logMsg),
-                "✅ MANUAL MODE: Using manual path: %s", pathUtf8);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-
-    // ✅ 2) Vérifier UNIQUEMENT que le dossier ConanSandbox\Saved existe
-    DWORD savedAttribs = GetFileAttributesW(pathToSave);
-    if (savedAttribs == INVALID_FILE_ATTRIBUTES || !(savedAttribs & FILE_ATTRIBUTE_DIRECTORY)) {
-        wchar_t errorMsg[512];
-        swprintf(errorMsg, 512,
-            L"The folder 'ConanSandbox\\Saved' does not exist in:\n%s\n\n"
-            L"Please verify:\n"
-            L"1. This is your Conan Exiles game folder\n",
-            pathToSave);
-
-        MessageBoxW(hwnd, errorMsg, L"Folder Not Found", MB_OK | MB_ICONERROR);
-        showStatusMessage(L"⚠ Error: ConanSandbox\\Saved folder not found", TRUE);
-        break;
-    }
-
-    // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
-    wchar_t distWhisper[32], distNormal[32], distShout[32];
-    swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
-    swprintf(distNormal, 32, L"%.1f", distanceNormal);
-    swprintf(distShout, 32, L"%.1f", distanceShout);
-
-    // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
-    wchar_t gameFolder[MAX_PATH];
-    wcscpy_s(gameFolder, MAX_PATH, pathToSave);
-    wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-    if (conanSandbox) {
-        *conanSandbox = L'\0';
-    }
-
-    BOOL wasAlreadySaved = isPatchAlreadySaved();
-
-    writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
-
-    // ✅ MISE À JOUR IMMÉDIATE DE L'AFFICHAGE APRÈS SAUVEGARDE
-    if (enableAutomaticPatchFind) {
-        // Afficher le chemin Steam dans l'interface
-        wcscpy_s(displayedPathText, MAX_PATH, gameFolder);
-        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
-            InvalidateRect(hSavedPathBg, NULL, TRUE);
-            UpdateWindow(hSavedPathBg);
-        }
-    }
-
-    if (!wasAlreadySaved) {
-        showStatusMessage(L"✅ Patch configuration saved successfully!", FALSE);
-    }
-    else {
-        showStatusMessage(L"✅ Patch configuration updated successfully!", FALSE);
-    }
-
-    if (enableLogConfig) {
-        char logMsg[512];
-        size_t converted = 0;
-        char savedPathUtf8[MAX_PATH];
-        wcstombs_s(&converted, savedPathUtf8, MAX_PATH, pathToSave, _TRUNCATE);
-
-        snprintf(logMsg, sizeof(logMsg),
-            "✅ SECURITY PASSED: Saved folder verified at: %s",
-            savedPathUtf8);
-        mumbleAPI.log(ownID, logMsg);
-    }
-}
-           else if (currentCategory == 2) {
-               // === CATÉGORIE 2 : ADVANCED OPTIONS (reste inchangé) ===
-               enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
-               enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
-               enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
-
-               wchar_t distWhisper[32], distNormal[32], distShout[32];
-               GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
-               GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
-               GetWindowTextW(hDistanceShoutEdit, distShout, 32);
-
-               distanceWhisper = (float)_wtof(distWhisper);
-               distanceNormal = (float)_wtof(distNormal);
-               distanceShout = (float)_wtof(distShout);
-
-               wchar_t gameFolder[MAX_PATH] = L"";
-
-               wchar_t* configFolder = getConfigFolderPath();
-               if (configFolder) {
-                   wchar_t configFile[MAX_PATH];
-                   swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-                   FILE* f = _wfopen(configFile, L"r");
-                   if (f) {
-                       wchar_t line[512];
-                       while (fgetws(line, 512, f)) {
-                           if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                               wchar_t* pathStart = line + 10;
-                               wchar_t* nl = wcschr(pathStart, L'\n');
-                               if (nl) *nl = L'\0';
-                               wchar_t* cr = wcschr(pathStart, L'\r');
-                               if (cr) *cr = L'\0';
-
-                               wcscpy_s(gameFolder, MAX_PATH, pathStart);
-                               wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-                               if (conanSandbox) {
-                                   *conanSandbox = L'\0';
-                               }
-                               break;
-                           }
-                       }
-                       fclose(f);
-                   }
-               }
-
-               writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
-
-               float currentVoiceDistance = localVoiceData.voiceDistance;
-               if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
-                   fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
-                   localVoiceData.voiceDistance = distanceWhisper;
-               }
-               else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
-                   localVoiceData.voiceDistance = distanceShout;
-               }
-               else {
-                   localVoiceData.voiceDistance = distanceNormal;
-               }
-
-               applyDistanceToAllPlayers();
-
-               showStatusMessage(L"Advanced options saved successfully!", FALSE);
-
-               if (enableLogConfig) {
-                   char logMsg[512];
-                   snprintf(logMsg, sizeof(logMsg),
-                       "✅ ADVANCED OPTIONS SAVED: WhisperKey=%d NormalKey=%d ShoutKey=%d ConfigKey=%d VoiceToggleKey=%d Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
-                       whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey,
-                       distanceWhisper, distanceNormal, distanceShout,
-                       enableDistanceMuting ? "true" : "false",
-                       enableAutomaticChannelChange ? "true" : "false",
-                       enableVoiceToggle ? "true" : "false");
-                   mumbleAPI.log(ownID, logMsg);
-               }
-           }
-           break;
-       }
 
         case 11: { // Save Voice Range (Advanced Options)
             showPresetSaveDialog();
@@ -7657,7 +7662,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         LPDRAWITEMSTRUCT lpDIS = (LPDRAWITEMSTRUCT)lParam;
         int ctrlId = lpDIS->CtlID;
 
-    
+
 
         if (ctrlId >= 2001 && ctrlId <= 2005) {
             HDC hdc = lpDIS->hDC;
